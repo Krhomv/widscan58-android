@@ -1,0 +1,56 @@
+# Builds the APK with the latest widscan58 web UI and its published firmware,
+# and attaches it to a GitHub release. Run it from the Actions tab (Run
+# workflow) to pick up a new widscan58 version. GPL-3.0-or-later.
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      widscan58_ref:
+        description: widscan58 branch, tag or commit to bundle
+        default: main
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Bundle the widscan58 web UI and firmware
+        id: webui
+        env:
+          REF: ${{ inputs.widscan58_ref || 'main' }}
+        run: echo "commit=$(FIRMWARE=pages scripts/fetch-webui.sh "$REF" | tail -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: ./gradlew --no-daemon assembleRelease -PversionCode=${{ github.run_number }} -PversionName=${{ github.run_number }}-${{ steps.webui.outputs.commit }}
+
+      - name: Rename
+        run: cp app/build/outputs/apk/release/app-release.apk widscan58-${{ github.run_number }}.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: widscan58-apk
+          path: widscan58-*.apk
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ github.run_number }}" widscan58-*.apk \
+            --title "Widscan58 build ${{ github.run_number }}" \
+            --notes "widscan58 web UI at CapnBry/widscan58@${{ steps.webui.outputs.commit }}."

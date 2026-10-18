@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Espressif (0x303A): the ESP32-C5's USB Serial/JTAG port. -->
+    <usb-device vendor-id="12346" />
+</resources>

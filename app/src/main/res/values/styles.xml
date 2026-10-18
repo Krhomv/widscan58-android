@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the web UI's theme color. -->
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">#0d0d0d</item>
+        <item name="android:colorPrimaryDark">#0d0d0d</item>
+        <item name="android:statusBarColor">#0d0d0d</item>
+        <item name="android:navigationBarColor">#0d0d0d</item>
+        <item name="android:windowBackground">@color/background</item>
+    </style>
+</resources>
