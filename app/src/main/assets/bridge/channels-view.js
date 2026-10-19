@@ -9,24 +9,86 @@
 (() => {
   "use strict";
 
-  // ---- Channel tables (MHz, 5.8 GHz), Oscar Liang's chart ----
-  const ch = (names, mhz) => mhz.map((f, j) => ({ name: names[j], mhz: f })).filter((c) => c.mhz);
-  const nums = (prefix) => [1, 2, 3, 4, 5, 6, 7, 8].map((j) => `${prefix}${j}`);
-  const CHS = nums("CH");
+  // ---- Channel tables (MHz, 5.8 GHz), Oscar Liang's chart (Sep 2023) ----
+  // A channel is { name, mhz } plus, where the chart gives them: ce (its name
+  // in CE mode; channels without one are FCC only), bw (MHz, when it differs
+  // from its row's) and lane (0 top, 1 bottom: drawn half height, where the
+  // chart staggers overlapping channels in one row).
+  const band = (prefix, mhz) => mhz.map((f, j) => ({ name: `${prefix}${j + 1}`, mhz: f }));
+  const chans = (...list) => list.map(([name, mhz, more]) => ({ name, mhz, ...more }));
+  const PUBLIC = ["CH8", 5839, { ce: "CH8", bw: 20, pub: true }]; // the DJI / Avatar public channel
+  const V1_25 = chans(
+    ["CH1", 5660],
+    ["CH2", 5695],
+    ["CH3", 5735, { ce: "CE1" }],
+    ["CH4", 5770, { ce: "CE2" }],
+    ["CH5", 5805, { ce: "CE3" }],
+    PUBLIC,
+    ["CH6", 5878],
+    ["CH7", 5914],
+  );
+  const V1_50 = chans(["CH1", 5695], ["CH2", 5770], PUBLIC, ["CH3", 5878]);
+  const O3_20 = chans(
+    ["CH1", 5669],
+    ["CH2", 5705],
+    ["CH3", 5768, { ce: "CE1" }],
+    ["CH4", 5804, { ce: "CE2" }],
+    ["CH5", 5839, { ce: "CE3" }],
+    ["CH6", 5876],
+    ["CH7", 5912],
+  );
   const PLATFORMS = [
-    { id: "R", group: "Analog", label: "Analog R", sub: "Raceband", bw: 30, chans: ch(nums("R"), [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917]) },
-    { id: "A", group: "Analog", label: "Analog A", sub: "Boscam A", bw: 30, chans: ch(nums("A"), [5865, 5845, 5825, 5805, 5785, 5765, 5745, 5725]) },
-    { id: "B", group: "Analog", label: "Analog B", sub: "Boscam B", bw: 30, chans: ch(nums("B"), [5733, 5752, 5771, 5790, 5809, 5828, 5847, 5866]) },
-    { id: "E", group: "Analog", label: "Analog E", sub: "Boscam E", bw: 30, chans: ch(nums("E"), [5705, 5685, 5665, 5645, 5885, 5905, 5925, 5945]) },
-    { id: "F", group: "Analog", label: "Analog F", sub: "Fatshark", bw: 30, chans: ch(nums("F"), [5740, 5760, 5780, 5800, 5820, 5840, 5860, 5880]) },
-    { id: "H", group: "Analog", label: "Analog H", sub: "Band H", bw: 30, chans: ch(nums("H"), [5653, 5693, 5733, 5773, 5813, 5853, 5893, 5933]) },
-    // Bands D, U, O and L sit below 5.6 GHz, outside the scanner's band.
-    { id: "dji25", group: "DJI / Walksnail Avatar", label: "DJI 25M FCC", sub: "25 Mbps FCC", bw: 20, chans: ch(CHS, [5660, 5695, 5735, 5770, 5805, 5878, 5914, 5839]) },
-    { id: "dji25ce", group: "DJI / Walksnail Avatar", label: "DJI 25M CE", sub: "25 Mbps CE", bw: 20, chans: ch(CHS, [5735, 5770, 5805, 0, 0, 0, 0, 5839]) },
-    { id: "dji50", group: "DJI / Walksnail Avatar", label: "DJI 50M", sub: "50 Mbps", bw: 40, chans: ch(CHS, [5695, 5770, 5878, 0, 0, 0, 0, 5839]) },
-    { id: "hdz", group: "HDZero", label: "HDZero FCC", sub: "FCC", bw: 27, chans: ch(CHS, [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917]) },
-    { id: "hdzce", group: "HDZero", label: "HDZero CE", sub: "CE", bw: 27, chans: ch(CHS, [5732, 5769, 5806, 5843]) },
+    { id: "A", group: "Analog", label: "Analog A", sub: "Boscam A", bw: 30, chans: band("A", [5865, 5845, 5825, 5805, 5785, 5765, 5745, 5725]) },
+    { id: "B", group: "Analog", label: "Analog B", sub: "Boscam B", bw: 30, chans: band("B", [5733, 5752, 5771, 5790, 5809, 5828, 5847, 5866]) },
+    { id: "E", group: "Analog", label: "Analog E", sub: "Boscam E", bw: 30, chans: band("E", [5705, 5685, 5665, 5645, 5885, 5905, 5925, 5945]) },
+    { id: "F", group: "Analog", label: "Analog F", sub: "Fatshark", bw: 30, chans: band("F", [5740, 5760, 5780, 5800, 5820, 5840, 5860, 5880]) },
+    { id: "R", group: "Analog", label: "Analog R", sub: "Raceband", bw: 30, chans: band("R", [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917]) },
+    // Not on the chart; from the table on the same page.
+    { id: "H", group: "Analog", label: "Analog H", sub: "Band H", bw: 30, chans: band("H", [5653, 5693, 5733, 5773, 5813, 5853, 5893, 5933]) },
+    { id: "v1-25", group: "DJI V1 / Vista", label: "DJI V1 25M", sub: "25 Mbps", bw: 20, chans: V1_25 },
+    { id: "v1-50", group: "DJI V1 / Vista", label: "DJI V1 50M", sub: "50 Mbps", bw: 40, chans: V1_50 },
+    { id: "o3-10", group: "DJI O3 / O4", label: "DJI O3 10M", sub: "10 MHz (14 Mbps)", bw: 10, chans: O3_20 },
+    { id: "o3-20", group: "DJI O3 / O4", label: "DJI O3 20M", sub: "20 MHz (25 Mbps)", bw: 20, chans: O3_20 },
+    {
+      id: "o3-40",
+      group: "DJI O3 / O4",
+      label: "DJI O3 40M",
+      sub: "40 MHz (50 Mbps)",
+      bw: 40,
+      chans: chans(["CH1", 5677], ["CH2", 5794, { ce: "CE1" }], ["CH3", 5902]),
+    },
+    {
+      id: "hdz",
+      group: "HDZero",
+      label: "HDZero",
+      sub: "Raceband + F2, F4",
+      bw: 27,
+      chans: chans(
+        ["R1", 5658],
+        ["R2", 5695],
+        ["R3", 5732, { ce: "CE1", lane: 0 }],
+        ["F2", 5760, { lane: 1 }],
+        ["R4", 5769, { ce: "CE2", lane: 0 }],
+        ["F4", 5800, { lane: 1 }],
+        ["R5", 5806, { ce: "CE3", lane: 0 }],
+        ["R6", 5843, { ce: "CE4" }],
+        ["R7", 5880],
+        ["R8", 5917],
+      ),
+    },
+    // Race mode's width is read off the chart's drawing. The chart prints R2
+    // as 5659, a typo for Raceband R2.
+    { id: "ws-race", group: "Walksnail Avatar", label: "WS Race", sub: "540p race mode", bw: 16, chans: band("R", [5658, 5695, 5732, 5769, 5806, 5843, 5880, 5917]) },
+    { id: "ws-25", group: "Walksnail Avatar", label: "WS 25M", sub: "Standard 25 Mbps", bw: 20, chans: V1_25 },
+    { id: "ws-50", group: "Walksnail Avatar", label: "WS 50M", sub: "Standard 50 Mbps", bw: 40, chans: V1_50 },
   ];
+  /** A channel's name in CE mode, or null where CE has no such channel: the
+   *  chart's CE names where its row gives them, otherwise the channels
+   *  centred in the chart's CE range (5725-5875 MHz). */
+  const CE_MHZ = [5725, 5875];
+  const ceName = (pl, c) =>
+    pl.chans.some((x) => x.ce && !x.pub) ? c.ce ?? null : c.mhz >= CE_MHZ[0] && c.mhz <= CE_MHZ[1] ? c.name : null;
+  const DEFAULT_PLATFORMS = ["R", "F", "v1-25", "o3-20", "hdz", "ws-25"];
   // Level above the band's noise floor (dB) at which a channel counts as busy.
   const LEVELS = [
     { min: -Infinity, name: "Clear", color: "--good" },
@@ -38,12 +100,15 @@
 
   // ---- Settings (per viewer, this phone) ----
   const KEY = "widscan58-android.channels";
-  const settings = { platforms: ["R", "A", "B", "E", "F", "dji25", "dji50", "hdz"], trace: "avg", tab: "scanner" };
+  const settings = { platforms: DEFAULT_PLATFORMS, region: "FCC", trace: "avg", tab: "scanner" };
   try {
     Object.assign(settings, JSON.parse(localStorage.getItem(KEY) || "{}"));
   } catch {
     /* storage unavailable or corrupt */
   }
+  if (!Array.isArray(settings.platforms)) settings.platforms = DEFAULT_PLATFORMS;
+  settings.platforms = settings.platforms.filter((id) => PLATFORMS.some((p) => p.id === id));
+  if (settings.region !== "CE") settings.region = "FCC";
   const save = () => {
     try {
       localStorage.setItem(KEY, JSON.stringify(settings));
@@ -157,17 +222,22 @@ table.aw-best i { display: inline-block; width: 8px; height: 8px; border-radius:
     };
     const nav = el("nav", { class: "aw-tabs", role: "tablist" }, tabs.scanner, tabs.channels);
 
-    const traceBtns = { avg: "Average", live: "Live", max: "Max hold" };
-    const seg = el("span", { class: "aw-seg" });
-    for (const [k, name] of Object.entries(traceBtns)) {
-      const b = el("button", { "data-k": k }, name);
-      b.onclick = () => {
-        settings.trace = k;
-        save();
-        sync();
-      };
-      seg.append(b);
-    }
+    /** Buttons that pick one value of a setting. */
+    const segmented = (key, options, title) => {
+      const seg = el("span", { class: "aw-seg", title });
+      for (const [k, name] of Object.entries(options)) {
+        const b = el("button", { "data-k": k }, name);
+        b.onclick = () => {
+          settings[key] = k;
+          save();
+          sync();
+        };
+        seg.append(b);
+      }
+      return seg;
+    };
+    const traceSeg = segmented("trace", { avg: "Average", live: "Live", max: "Max hold" }, "Spectrum trace the levels come from");
+    const regionSeg = segmented("region", { FCC: "FCC", CE: "CE" }, "CE shows the chart's CE channels, or those inside its CE range");
     const resetBtn = el("button", { title: "Start the max hold and average over" }, "Reset holds");
     resetBtn.onclick = () => window.widscan58?.store.resetHolds();
     const pickBtn = el("button", { "aria-expanded": "false" }, "Platforms");
@@ -199,7 +269,7 @@ table.aw-best i { display: inline-block; width: 8px; height: 8px; border-radius:
     const card = el(
       "section",
       { class: "card span-12" },
-      el("h2", {}, "Channel occupancy", el("span", { class: "tools" }, seg, resetBtn, pickBtn)),
+      el("h2", {}, "Channel occupancy", el("span", { class: "tools" }, regionSeg, traceSeg, resetBtn, pickBtn)),
       picker,
       note,
       el("div", { class: "aw-chart" }, canvas, tip),
@@ -215,7 +285,8 @@ table.aw-best i { display: inline-block; width: 8px; height: 8px; border-radius:
       document.body.classList.toggle("aw-tab-channels", on);
       tabs.scanner.setAttribute("aria-selected", String(!on));
       tabs.channels.setAttribute("aria-selected", String(on));
-      for (const b of seg.children) b.classList.toggle("on", b.dataset.k === settings.trace);
+      for (const b of traceSeg.children) b.classList.toggle("on", b.dataset.k === settings.trace);
+      for (const b of regionSeg.children) b.classList.toggle("on", b.dataset.k === settings.region);
       dirty = true;
       // The scanner's canvases size themselves on redraw.
       if (!on) window.dispatchEvent(new Event("resize"));
@@ -240,7 +311,9 @@ table.aw-best i { display: inline-block; width: 8px; height: 8px; border-radius:
       const h = hits.find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
       if (!h) return void (tip.hidden = true);
       const lv = Number.isNaN(h.m.db) || h.m.coverage < 0.6 ? "not scanned" : `${h.m.db.toFixed(1)} dB above floor, ${levelOf(h.m.db).name.toLowerCase()}`;
-      tip.textContent = `${h.p.label} ${h.c.name} · ${h.c.mhz} MHz · ${h.p.bw} MHz wide · ${lv}`;
+      const ce = settings.region === "CE" && ceName(h.p, h.c);
+      const name = ce && ce !== h.c.name ? `${ce} (${h.c.name})` : h.c.name;
+      tip.textContent = `${h.p.label} ${name}${h.c.pub ? " public" : ""} · ${h.c.mhz} MHz · ${h.c.bw ?? h.p.bw} MHz wide · ${lv}`;
       tip.hidden = false;
       const left = Math.max(0, Math.min(h.x + h.w / 2 - tip.offsetWidth / 2, r.width - tip.offsetWidth));
       tip.style.left = `${left}px`;
@@ -432,33 +505,44 @@ table.aw-best i { display: inline-block; width: 8px; height: 8px; border-radius:
           ctx.font = font(10);
           ctx.fillText(`${pl.bw} MHz`, 4, y + rowH / 2 + 7);
         }
-        const sorted = [...pl.chans].sort((a, b) => a.mhz - b.mhz);
+        const ce = settings.region === "CE";
+        const shown = pl.chans.filter((c) => !ce || ceName(pl, c)).map((c) => ({ c, name: ce ? ceName(pl, c) : c.name, bw: c.bw ?? pl.bw }));
+        if (!shown.length) {
+          ctx.textAlign = "left";
+          ctx.fillStyle = C.muted;
+          ctx.font = font(11);
+          ctx.fillText("No channels in CE", left + 4, y + rowH / 2);
+        }
         const res = [];
-        for (const c of pl.chans) {
-          const i = sorted.indexOf(c);
-          const gapL = i > 0 ? c.mhz - sorted[i - 1].mhz : Infinity;
-          const gapR = i < sorted.length - 1 ? sorted[i + 1].mhz - c.mhz : Infinity;
-          const half = Math.min(pl.bw / 2, gapL / 2, gapR / 2);
+        for (const s of shown) {
+          const { c, bw } = s;
+          // Trim against the neighbours sharing its lane (or the whole row).
+          let half = bw / 2;
+          for (const o of shown)
+            if (o !== s && (c.lane === undefined || o.c.lane === undefined || o.c.lane === c.lane))
+              half = Math.min(half, Math.abs(o.c.mhz - c.mhz) / 2);
           const x0 = sx(c.mhz - half) + 1;
           const x1 = sx(c.mhz + half) - 1;
-          const m = p ? measure(tr, F0, floor, c, pl.bw) : { db: NaN, coverage: 0 };
+          const by = y + 3 + (c.lane === 1 ? (rowH - 6) / 2 + 1 : 0);
+          const bh = c.lane === undefined ? rowH - 6 : (rowH - 6) / 2 - 1;
+          const m = p ? measure(tr, F0, floor, c, bw) : { db: NaN, coverage: 0 };
           const scanned = !Number.isNaN(m.db) && m.coverage >= 0.6;
           const lv = scanned ? levelOf(m.db) : null;
           ctx.fillStyle = lv ? css(lv.color) : C.grid;
           ctx.globalAlpha = lv ? 0.85 : 1;
           ctx.beginPath();
-          ctx.roundRect(x0, y + 3, Math.max(1, x1 - x0), rowH - 6, 4);
+          ctx.roundRect(x0, by, Math.max(1, x1 - x0), bh, 4);
           ctx.fill();
           ctx.globalAlpha = 1;
-          const label = narrow ? c.name.replace("CH", "") : c.name;
-          ctx.font = font(10, 600);
+          const label = narrow ? s.name.replace("CH", "") : s.name;
+          ctx.font = font(c.lane === undefined ? 10 : 9, 600);
           ctx.textAlign = "center";
           if (ctx.measureText(label).width < x1 - x0 - 2) {
             ctx.fillStyle = lv ? "#0b0b0b" : C.muted;
-            ctx.fillText(label, (x0 + x1) / 2, y + rowH / 2);
+            ctx.fillText(label, (x0 + x1) / 2, by + bh / 2 + 0.5);
           }
-          hits.push({ x: x0, y: y + 3, w: x1 - x0, h: rowH - 6, p: pl, c, m });
-          res.push({ c, m, scanned });
+          hits.push({ x: x0, y: by, w: x1 - x0, h: bh, p: pl, c, m });
+          res.push({ c, name: s.name, m, scanned });
         }
         results.push({ pl, res });
       });
@@ -469,7 +553,7 @@ table.aw-best i { display: inline-block; width: 8px; height: 8px; border-radius:
           ? el(
               "td",
               {},
-              el("span", {}, el("i", { style: `background:var(${levelOf(r.m.db).color})` }), `${r.c.name} ${r.c.mhz}`),
+              el("span", {}, el("i", { style: `background:var(${levelOf(r.m.db).color})` }), `${r.name} ${r.c.mhz}`),
               " ",
               el("span", { class: "muted" }, `${r.m.db.toFixed(1)} dB`),
             )
