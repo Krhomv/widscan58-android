@@ -26,6 +26,16 @@ WebUSB the UI uses on top of Android's USB host API (`UsbBridge.java`). It also
 routes lap-timer voice callouts to Android's text-to-speech and saves session
 recordings to Downloads.
 
+The app adds a **Channels** tab next to the scanner: a chart in the style of
+[Oscar Liang's 5.8 GHz channel chart](https://oscarliang.com/fpv-channels/)
+with a row per platform and mode (analog bands, DJI V1/Vista 25 and 50 Mbps,
+DJI O3/O4 10, 20 and 40 MHz, HDZero, Walksnail race mode and standard 25 and
+50 Mbps; FCC or CE), each channel coloured by how far its mean power over the
+platform's bandwidth sits above the band's noise floor, plus the clearest
+channel of each platform. **Platforms** picks the rows; it reads the band
+panorama of monitor mode, so it only sees the parts of the band around the
+channels being scanned (`app/src/main/assets/bridge/channels-view.js`).
+
 The board is matched by Espressif's USB vendor ID (`res/xml/device_filter.xml`).
 
 ## Build
