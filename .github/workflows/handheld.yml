@@ -1,0 +1,71 @@
+# Builds the handheld display firmware (handheld/) for the Waveshare
+# ESP32-S3-Touch-AMOLED-2.41, as one image to flash at 0x0. Pull requests:
+# the widscan58-handheld artifact; main: also a handheld-N release.
+# GPL-3.0-or-later.
+name: Build handheld firmware
+
+on:
+  push:
+    branches: [main]
+    paths: [handheld/**, .github/workflows/handheld.yml]
+  pull_request:
+    paths: [handheld/**, .github/workflows/handheld.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: handheld
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('handheld/platformio.ini') }}
+
+      - name: Host test (parser, model and a rendered frame)
+        run: |
+          g++ -O2 -Wall -Wextra -Werror -std=c++17 -Isrc test/host.cpp \
+            src/proto.cpp src/scanner.cpp src/ui.cpp src/gfx.cpp src/fonts.cpp -o host
+          ./host screen.ppm
+          python -m pip install --quiet pillow
+          python -c "from PIL import Image; Image.open('screen.ppm').save('screen.png')"
+
+      - name: Build
+        run: |
+          python -m pip install --quiet platformio esptool==4.8.1
+          pio run -e waveshare-amoled-241
+
+      - name: Merge into one image
+        run: |
+          B=.pio/build/waveshare-amoled-241
+          APP0=$(find ~/.platformio/packages -name boot_app0.bin | head -1)
+          python -m esptool --chip esp32s3 merge_bin -o widscan58-handheld-${{ github.run_number }}.bin \
+            --flash_mode qio --flash_size 16MB \
+            0x0 $B/bootloader.bin 0x8000 $B/partitions.bin 0xe000 "$APP0" 0x10000 $B/firmware.bin
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: widscan58-handheld
+          path: |
+            handheld/widscan58-handheld-*.bin
+            handheld/screen.png
+
+      - name: Release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "handheld-${{ github.run_number }}" widscan58-handheld-*.bin screen.png \
+            --title "Widscan58 handheld ${{ github.run_number }}" \
+            --notes "Display firmware for the Waveshare ESP32-S3-Touch-AMOLED-2.41. Flash the .bin at 0x0 (see handheld/README.md)."
