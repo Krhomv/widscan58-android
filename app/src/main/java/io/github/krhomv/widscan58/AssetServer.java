@@ -26,6 +26,7 @@ final class AssetServer {
     static final String HOST = "appassets.androidplatform.net";
     static final String ORIGIN = "https://" + HOST;
     static final String BRIDGE_PATH = "/__android/bridge.js";
+    static final String CHANNELS_PATH = "/__android/channels.js";
     /** Where the in-app flasher gets firmware the APK does not bundle. */
     private static final String FIRMWARE_FALLBACK = "https://capnbry.github.io/widscan58";
 
@@ -42,6 +43,7 @@ final class AssetServer {
         if (path.endsWith("/")) path += "index.html";
         try {
             if (path.equals(BRIDGE_PATH)) return ok("text/javascript", assets.open("bridge/android-bridge.js"));
+            if (path.equals(CHANNELS_PATH)) return ok("text/javascript", assets.open("bridge/channels-view.js"));
             // The UI's service worker caches for offline use; the app is offline already.
             if (path.equals("/sw.js")) return status(404, "Not Found");
             if (path.equals("/index.html")) return ok("text/html", injectBridge(assets.open("www/index.html")));
@@ -57,10 +59,11 @@ final class AssetServer {
         }
     }
 
-    /** A classic script ahead of the UI's module scripts runs before them. */
+    /** A classic script ahead of the UI's module scripts runs before them. The
+     *  channels tab waits for the page the UI builds. */
     private static InputStream injectBridge(InputStream in) throws IOException {
         String html = new String(readAll(in), StandardCharsets.UTF_8);
-        String tag = "<script src=\"." + BRIDGE_PATH + "\"></script>";
+        String tag = "<script src=\"." + BRIDGE_PATH + "\"></script><script src=\"." + CHANNELS_PATH + "\"></script>";
         int head = html.indexOf("<head>");
         html = head >= 0 ? html.substring(0, head + 6) + tag + html.substring(head + 6) : tag + html;
         return new ByteArrayInputStream(html.getBytes(StandardCharsets.UTF_8));

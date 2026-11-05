@@ -1,11 +1,13 @@
 # Builds the APK with the latest widscan58 web UI and its published firmware,
-# and attaches it to a GitHub release. Run it from the Actions tab (Run
+# and attaches it to a GitHub release (pull requests: only to the run, as the
+# widscan58-apk artifact). Run it from the Actions tab (Run
 # workflow) to pick up a new widscan58 version. GPL-3.0-or-later.
 name: Build APK
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
     inputs:
       widscan58_ref:
@@ -48,6 +50,7 @@ jobs:
           path: widscan58-*.apk
 
       - name: Release
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
