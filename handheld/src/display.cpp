@@ -4,68 +4,78 @@
 #include "board.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
+#include "freertos/queue.h"
 #include "freertos/semphr.h"
 
-static const int W = 600, H = 450;
+static const int W = 600;
 static const int Y_GAP = 16;     // the panel's first row in landscape (Waveshare's examples)
 static const int CHUNK_ROWS = 16;
+static const int SLOTS = 3;
 
-static spi_device_handle_t dev;
-
+// Everything on the SPI bus happens in one task on core 0 (its interrupts
+// too), so drawing on core 1 never waits for the bus and the UART's
+// interrupt on core 1 is not delayed by the SPI's.
+//
 // QSPI framing: a write is opcode 0x02 (registers, one line) or 0x32 (pixels,
 // data on four lines), then the command in the middle byte of a 24-bit address.
-//
-// Pixels go out as queued transactions, two band buffers in turn, each with
-// its own window commands queued ahead of it: the bus never waits on the CPU
-// and the CPU only waits when it wants a buffer that is still being sent.
-struct Slot {
-    spi_transaction_t t[3];  // column window, row window, pixels
-    uint16_t *buf;
-    bool busy;
-};
-static Slot slots[2];
+
+static spi_device_handle_t dev;
+static uint16_t *slots[SLOTS];
 static int nextSlot;
-static int inflight;  // queued transactions not yet collected
+static SemaphoreHandle_t freeSlots;  // band buffers the caller may draw into
+static SemaphoreHandle_t jobDone;    // a synchronous job (command, init) finished
+static QueueHandle_t jobs;
+static bool initOk;
 
-static void collectOne() {
-    spi_transaction_t *r;
-    spi_device_get_trans_result(dev, &r, portMAX_DELAY);
-    inflight--;
-    if (r->user) ((Slot *)r->user)->busy = false;
-}
+enum JobType : uint8_t { JOB_BAND, JOB_CMD, JOB_INIT };
+struct Job {
+    JobType type;
+    bool swap;       // band: convert to big-endian first
+    uint8_t c, n;    // command, data length
+    uint8_t d[4];
+    uint16_t delayMs;
+    uint16_t *buf;
+    int16_t y, rows;
+};
 
-static void collectAll() {
-    while (inflight) collectOne();
-}
-
-static void cmd(uint8_t c, const uint8_t *data = nullptr, size_t n = 0) {
-    collectAll();
+static void busCmd(uint8_t c, const uint8_t *data, size_t n) {
     spi_transaction_t t = {};
     t.cmd = 0x02;
     t.addr = (uint32_t)c << 8;
-    if (n <= 4) {
-        t.flags = SPI_TRANS_USE_TXDATA;
-        for (size_t i = 0; i < n; i++) t.tx_data[i] = data[i];
-    } else {
-        t.tx_buffer = data;
-    }
-    t.length = n * 8;
-    spi_device_polling_transmit(dev, &t);
-}
-
-static void windowTrans(spi_transaction_t &t, uint8_t c, int a, int b) {
-    t = {};
     t.flags = SPI_TRANS_USE_TXDATA;
-    t.cmd = 0x02;
-    t.addr = (uint32_t)c << 8;
-    t.tx_data[0] = (uint8_t)(a >> 8);
-    t.tx_data[1] = (uint8_t)a;
-    t.tx_data[2] = (uint8_t)(b >> 8);
-    t.tx_data[3] = (uint8_t)b;
-    t.length = 32;
+    for (size_t i = 0; i < n && i < 4; i++) t.tx_data[i] = data[i];
+    t.length = n * 8;
+    spi_device_transmit(dev, &t);
 }
 
-bool displayInit() {
+static void busWindow(uint8_t c, int a, int b) {
+    uint8_t d[4] = {(uint8_t)(a >> 8), (uint8_t)a, (uint8_t)(b >> 8), (uint8_t)b};
+    busCmd(c, d, 4);
+}
+
+static void busBand(uint16_t *buf, int y, int rows, bool swap) {
+    if (swap) {
+        // RGB565 big-endian; two pixels per 32-bit word.
+        uint32_t *p = (uint32_t *)buf;
+        for (int i = 0; i < W * rows / 2; i++) {
+            uint32_t v = p[i];
+            p[i] = ((v & 0x00ff00ffu) << 8) | ((v >> 8) & 0x00ff00ffu);
+        }
+    }
+    busWindow(0x2a, 0, W - 1);
+    busWindow(0x2b, y + Y_GAP, y + rows - 1 + Y_GAP);
+    spi_transaction_t p = {};
+    p.flags = SPI_TRANS_MODE_QIO;
+    p.cmd = 0x32;
+    p.addr = 0x2c << 8;
+    p.tx_buffer = buf;
+    p.length = W * rows * 16;
+    spi_device_transmit(dev, &p);
+}
+
+static void cmd(uint8_t c, const uint8_t *data = nullptr, size_t n = 0) { busCmd(c, data, n); }
+
+static bool busInit() {
     spi_bus_config_t bus = {};
     bus.sclk_io_num = PIN_LCD_CLK;
     bus.data0_io_num = PIN_LCD_D0;
@@ -82,13 +92,9 @@ bool displayInit() {
     dc.mode = 0;
     dc.clock_speed_hz = 40 * 1000 * 1000;
     dc.spics_io_num = PIN_LCD_CS;
-    dc.queue_size = 8;
+    dc.queue_size = 4;
     dc.flags = SPI_DEVICE_HALFDUPLEX;
     if (spi_bus_add_device(SPI2_HOST, &dc, &dev) != ESP_OK) return false;
-    for (auto &sl : slots) {
-        sl.buf = (uint16_t *)heap_caps_malloc(W * CHUNK_ROWS * 2, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-        if (!sl.buf) return false;
-    }
 
     exioWrite(EXIO_PANEL_RESET, true);
     delay(20);
@@ -130,44 +136,76 @@ bool displayInit() {
     return true;
 }
 
+static void displayTask(void *) {
+    Job j;
+    for (;;) {
+        xQueueReceive(jobs, &j, portMAX_DELAY);
+        switch (j.type) {
+            case JOB_INIT:
+                initOk = busInit();
+                xSemaphoreGive(jobDone);
+                break;
+            case JOB_BAND:
+                busBand(j.buf, j.y, j.rows, j.swap);
+                xSemaphoreGive(freeSlots);
+                break;
+            case JOB_CMD:
+                busCmd(j.c, j.d, j.n);
+                if (j.delayMs) delay(j.delayMs);
+                xSemaphoreGive(jobDone);
+                break;
+        }
+    }
+}
+
+bool displayInit() {
+    for (auto &b : slots) {
+        b = (uint16_t *)heap_caps_malloc(W * CHUNK_ROWS * 2, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        if (!b) return false;
+    }
+    freeSlots = xSemaphoreCreateCounting(SLOTS, SLOTS);
+    jobDone = xSemaphoreCreateBinary();
+    jobs = xQueueCreate(SLOTS + 2, sizeof(Job));
+    xTaskCreatePinnedToCore(displayTask, "display", 4096, nullptr, 4, nullptr, 0);
+    Job j = {};
+    j.type = JOB_INIT;
+    xQueueSend(jobs, &j, portMAX_DELAY);
+    xSemaphoreTake(jobDone, portMAX_DELAY);
+    return initOk;
+}
+
+/** A command, after every band already handed over; returns when sent. */
+static void syncCmd(uint8_t c, const uint8_t *d, uint8_t n, uint16_t delayMs) {
+    Job j = {};
+    j.type = JOB_CMD;
+    j.c = c;
+    j.n = n;
+    for (int i = 0; i < n && i < 4; i++) j.d[i] = d[i];
+    j.delayMs = delayMs;
+    xQueueSend(jobs, &j, portMAX_DELAY);
+    xSemaphoreTake(jobDone, portMAX_DELAY);
+}
+
 int displayBandRows() { return CHUNK_ROWS; }
 
 uint16_t *displayBand() {
-    Slot &sl = slots[nextSlot];
-    while (sl.busy) collectOne();
-    return sl.buf;
+    xSemaphoreTake(freeSlots, portMAX_DELAY);
+    uint16_t *b = slots[nextSlot];
+    nextSlot = (nextSlot + 1) % SLOTS;
+    return b;
 }
 
-/** Queues the next slot's buffer (from displayBand) as frame rows y.. */
-static void queueBand(int y, int rows) {
-    Slot &sl = slots[nextSlot];
-    nextSlot ^= 1;
-    windowTrans(sl.t[0], 0x2a, 0, W - 1);
-    windowTrans(sl.t[1], 0x2b, y + Y_GAP, y + rows - 1 + Y_GAP);
-    spi_transaction_t &p = sl.t[2];
-    p = {};
-    p.flags = SPI_TRANS_MODE_QIO;
-    p.cmd = 0x32;
-    p.addr = 0x2c << 8;
-    p.tx_buffer = sl.buf;
-    p.length = W * rows * 16;
-    p.user = &sl;
-    sl.busy = true;
-    for (auto &t : sl.t) {
-        spi_device_queue_trans(dev, &t, portMAX_DELAY);
-        inflight++;
-    }
+static void sendBand(uint16_t *buf, int y, int rows, bool swap) {
+    Job j = {};
+    j.type = JOB_BAND;
+    j.swap = swap;
+    j.buf = buf;
+    j.y = (int16_t)y;
+    j.rows = (int16_t)rows;
+    xQueueSend(jobs, &j, portMAX_DELAY);
 }
 
-void displaySendBand(uint16_t *buf, int y, int rows) {
-    // The panel takes RGB565 big-endian; two pixels per 32-bit word.
-    uint32_t *p = (uint32_t *)buf;
-    for (int i = 0; i < W * rows / 2; i++) {
-        uint32_t v = p[i];
-        p[i] = ((v & 0x00ff00ffu) << 8) | ((v >> 8) & 0x00ff00ffu);
-    }
-    queueBand(y, rows);
-}
+void displaySendBand(uint16_t *buf, int y, int rows) { sendBand(buf, y, rows, true); }
 
 void displayFlush(const uint16_t *fb, int y0, int y1) {
     for (int y = y0; y < y1; y += CHUNK_ROWS) {
@@ -176,14 +214,13 @@ void displayFlush(const uint16_t *fb, int y0, int y1) {
         // The panel takes RGB565 big-endian.
         const uint16_t *src = fb + y * W;
         for (int i = 0; i < W * rows; i++) buf[i] = (uint16_t)(src[i] << 8 | src[i] >> 8);
-        queueBand(y, rows);
+        sendBand(buf, y, rows, false);
     }
 }
 
-void displayBrightness(uint8_t level) { cmd(0x51, &level, 1); }
+void displayBrightness(uint8_t level) { syncCmd(0x51, &level, 1, 0); }
 
 void displaySleep(bool sleep) {
-    cmd(sleep ? 0x28 : 0x29);
-    cmd(sleep ? 0x10 : 0x11);
-    delay(sleep ? 5 : 80);
+    syncCmd(sleep ? 0x28 : 0x29, nullptr, 0, 0);
+    syncCmd(sleep ? 0x10 : 0x11, nullptr, 0, sleep ? 5 : 80);
 }
