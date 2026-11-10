@@ -131,9 +131,25 @@ int main(int argc, char **argv) {
     ui.link = LINK_OK;
     ui.batteryPct = 82;
     bool a, b, cc;
-    ui.tap(436, 266 + 27 * 0 + 13, 3990, &a, &b, &cc);  // select R6 on the first row
+    ui.tap(436, 347 + 27 * 0 + 13, 3990, &a, &b, &cc);  // select R6 on the first row
     ui.update(sc, 4000);
     ui.draw(R_STATUS | R_PLOT | R_ROWS, 4000);
+
+    // The plot drawn band by band (as on the board) must match the full draw.
+    {
+        RegionRows rr = regionRows(R_PLOT);
+        static uint16_t band[Ui::W * 16];
+        for (int y = rr.y0; y < rr.y1; y += 16) {
+            int rows = rr.y1 - y < 16 ? rr.y1 - y : 16;
+            for (auto &v : band) v = 0x1234;
+            canvas.setBand(band, y, y + rows);
+            ui.preparePlot();
+            ui.drawPlot(4000);
+            assert(!memcmp(band, fb + y * Ui::W, Ui::W * rows * 2));
+        }
+        canvas.setFull(fb);
+        printf("bands ok\n");
+    }
 
     FILE *out = fopen(argc > 1 ? argv[1] : "out.ppm", "wb");
     fprintf(out, "P6 %d %d 255\n", Ui::W, Ui::H);

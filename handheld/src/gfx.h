@@ -25,9 +25,22 @@ enum Align { LEFT, CENTER, RIGHT };
 
 class Canvas {
 public:
-    Canvas(uint16_t *px, int w, int h) : px(px), w(w), h(h) {}
-    uint16_t *px;
+    Canvas(uint16_t *px, int w, int h) : px(px), w(w), h(h), cy0(0), cy1(h) {}
+    uint16_t *px;  // row y at px + y * w (only rows cy0..cy1-1 need to exist)
     const int w, h;
+    int cy0, cy1;  // rows drawn: a band of the frame can be drawn in a small buffer
+
+    /** Draw only rows [y0, y1), into `band` (that many rows, w wide). */
+    void setBand(uint16_t *band, int y0, int y1) {
+        px = band - y0 * w;
+        cy0 = y0;
+        cy1 = y1;
+    }
+    void setFull(uint16_t *fb) {
+        px = fb;
+        cy0 = 0;
+        cy1 = h;
+    }
 
     void fill(int x, int y, int fw, int fh, uint16_t c);
     void blendFill(int x, int y, int fw, int fh, uint16_t c, uint8_t alpha);
@@ -39,7 +52,7 @@ public:
     void roundRect(int x, int y, int rw, int rh, int r, uint16_t c);
     void roundFrame(int x, int y, int rw, int rh, int r, uint16_t c);
     void pixel(int x, int y, uint16_t c) {
-        if (x >= 0 && y >= 0 && x < w && y < h) px[y * w + x] = c;
+        if (x >= 0 && y >= cy0 && x < w && y < cy1) px[y * w + x] = c;
     }
     void blendPixel(int x, int y, uint16_t c, uint8_t alpha);
     void circle(int cx, int cy, int r, uint16_t c);

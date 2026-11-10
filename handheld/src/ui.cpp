@@ -117,7 +117,10 @@ void Ui::update(const Scanner &sc, uint32_t nowMs) {
 
 int Ui::draw(int mask, uint32_t nowMs) {
     if (mask & R_STATUS) drawStatus(nowMs);
-    if (mask & R_PLOT) drawPlot(nowMs);
+    if (mask & R_PLOT) {
+        preparePlot();
+        drawPlot(nowMs);
+    }
     if (mask & R_ROWS) drawRows();
     return mask;
 }
@@ -180,6 +183,27 @@ static void colormap(float t, uint8_t *r, uint8_t *g, uint8_t *b) {
     *b = (uint8_t)(st[k][2] + (st[k + 1][2] - st[k][2]) * u);
 }
 
+void Ui::preparePlot() {
+    const float topDb = bottomDb + 70;
+    for (int x = 0; x < PW; x++) {
+        if (isnan(live[x])) {
+            yl[x] = ym[x] = -1;
+        } else {
+            float a = SPEC_T + (topDb - live[x]) / 70 * (SPEC_B - SPEC_T);
+            float b = SPEC_T + (topDb - maxH[x]) / 70 * (SPEC_B - SPEC_T);
+            yl[x] = (int16_t)lroundf(a < SPEC_T ? SPEC_T : a > SPEC_B ? SPEC_B : a);
+            ym[x] = (int16_t)lroundf(b < SPEC_T ? SPEC_T : b > SPEC_B ? SPEC_B : b);
+        }
+    }
+    float base = isnan(floorDb) ? -95 : floorDb - 3;
+    for (int k = 1; k < 256; k++) {
+        uint8_t r, g, b;
+        colormap((k * 0.5f - 127.5f - base) / 45.0f, &r, &g, &b);
+        wfLut[k] = rgb(r, g, b);
+    }
+    wfLut[0] = NOSCAN;
+}
+
 void Ui::drawPlot(uint32_t nowMs) {
     RegionRows rr = regionRows(R_PLOT);
     c.fill(0, rr.y0, W, rr.y1 - rr.y0, BG);
@@ -189,20 +213,11 @@ void Ui::drawPlot(uint32_t nowMs) {
         return (int)lroundf(y < SPEC_T ? SPEC_T : y > SPEC_B ? SPEC_B : y);
     };
     char s[48];
+    // The spectrum rows in this band.
+    const int sy0 = SPEC_T > c.cy0 ? SPEC_T : c.cy0, sy1 = SPEC_B < c.cy1 - 1 ? SPEC_B : c.cy1 - 1;
 
-    // Trace heights first: the framebuffer is in PSRAM, so everything below
-    // walks it row by row (a column walk misses the cache on every pixel).
-    static int16_t yl[PW], ym[PW];
-    for (int x = 0; x < PW; x++) {
-        if (isnan(live[x])) {
-            yl[x] = ym[x] = -1;
-        } else {
-            yl[x] = (int16_t)dy(live[x]);
-            ym[x] = (int16_t)dy(maxH[x]);
-        }
-    }
     // Columns no LO reaches.
-    for (int y = SPEC_T; y <= SPEC_B; y++) {
+    for (int y = sy0; y <= sy1; y++) {
         uint16_t *row = c.px + y * W + LX;
         for (int x = 0; x < PW; x++)
             if (yl[x] < 0) row[x] = NOSCAN;
@@ -227,7 +242,7 @@ void Ui::drawPlot(uint32_t nowMs) {
 
     // Live trace: a fading fill under a line, then the max hold line.
     const uint16_t fillC = rgb(56, 152, 255);
-    for (int y = SPEC_T; y <= SPEC_B; y++) {
+    for (int y = sy0; y <= sy1; y++) {
         float t = (float)(y - SPEC_T) / (SPEC_B - SPEC_T);
         uint8_t a = (uint8_t)(150 - 140 * t);
         uint16_t *row = c.px + y * W + LX;
@@ -264,18 +279,11 @@ void Ui::drawPlot(uint32_t nowMs) {
     }
 
     // Waterfall.
-    static uint16_t lut[256];
-    float base = isnan(floorDb) ? -95 : floorDb - 3;
-    for (int k = 1; k < 256; k++) {
-        uint8_t r, g, b;
-        colormap((k * 0.5f - 127.5f - base) / 45.0f, &r, &g, &b);
-        lut[k] = rgb(r, g, b);
-    }
-    lut[0] = NOSCAN;
     for (int j = 0; j < WF_ROWS; j++) {
+        if (WF_T + j < c.cy0 || WF_T + j >= c.cy1) continue;
         const uint8_t *row = wf[(wfHead + j) % WF_ROWS];
         uint16_t *p = c.px + (WF_T + j) * W + LX;
-        for (int x = 0; x < PW; x++) p[x] = lut[row[x]];
+        for (int x = 0; x < PW; x++) p[x] = wfLut[row[x]];
     }
     c.text(font_small, 8, WF_T + 12, "Waterfall", MUTED);
     c.text(font_small, 8, WF_T + 26, "last 3 s", MUTED);

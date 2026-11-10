@@ -4,9 +4,9 @@
 
 void Canvas::fill(int x, int y, int fw, int fh, uint16_t c) {
     if (x < 0) fw += x, x = 0;
-    if (y < 0) fh += y, y = 0;
+    if (y < cy0) fh -= cy0 - y, y = cy0;
     if (x + fw > w) fw = w - x;
-    if (y + fh > h) fh = h - y;
+    if (y + fh > cy1) fh = cy1 - y;
     if (fw <= 0 || fh <= 0) return;
     for (int j = 0; j < fh; j++) {
         uint16_t *p = px + (y + j) * w + x;
@@ -16,9 +16,9 @@ void Canvas::fill(int x, int y, int fw, int fh, uint16_t c) {
 
 void Canvas::blendFill(int x, int y, int fw, int fh, uint16_t c, uint8_t alpha) {
     if (x < 0) fw += x, x = 0;
-    if (y < 0) fh += y, y = 0;
+    if (y < cy0) fh -= cy0 - y, y = cy0;
     if (x + fw > w) fw = w - x;
-    if (y + fh > h) fh = h - y;
+    if (y + fh > cy1) fh = cy1 - y;
     for (int j = 0; j < fh; j++) {
         uint16_t *p = px + (y + j) * w + x;
         for (int i = 0; i < fw; i++) p[i] = mix(c, p[i], alpha);
@@ -39,7 +39,7 @@ void Canvas::dashedV(int x, int y0, int y1, uint16_t c, int on, int off) {
 }
 
 void Canvas::blendPixel(int x, int y, uint16_t c, uint8_t alpha) {
-    if (x >= 0 && y >= 0 && x < w && y < h) px[y * w + x] = mix(c, px[y * w + x], alpha);
+    if (x >= 0 && y >= cy0 && x < w && y < cy1) px[y * w + x] = mix(c, px[y * w + x], alpha);
 }
 
 // Rounded corners: per corner row, the inset and the coverage of the edge pixel.
@@ -137,6 +137,11 @@ int Canvas::text(const Font &f, int x, int y, const char *s, uint16_t c, Align a
         const Glyph *g = find(f, nextCp(s));
         if (!g) continue;
         const uint8_t *bits = f.bits + g->offset;
+        int gy = y + g->y;
+        if (gy >= cy1 || gy + g->h <= cy0) {  // outside the band
+            x += g->advance;
+            continue;
+        }
         for (int j = 0; j < g->h; j++)
             for (int i = 0; i < g->w; i++) {
                 int k = j * g->w + i;

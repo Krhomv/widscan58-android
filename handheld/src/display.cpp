@@ -92,22 +92,43 @@ bool displayInit() {
     return true;
 }
 
-void displayFlush(const uint16_t *fb, int y0, int y1) {
-    for (int y = y0; y < y1; y += CHUNK_ROWS) {
-        int rows = y1 - y < CHUNK_ROWS ? y1 - y : CHUNK_ROWS;
-        xSemaphoreTake(chunkFree, portMAX_DELAY);
-        static int next = 0;
-        uint16_t *buf = chunk[next];
-        next ^= 1;
-        // The panel takes RGB565 big-endian.
-        const uint16_t *src = fb + y * W;
-        for (int i = 0; i < W * rows; i++) buf[i] = (uint16_t)(src[i] << 8 | src[i] >> 8);
+int displayBandRows() { return CHUNK_ROWS; }
+
+uint16_t *displayBand() {
+    xSemaphoreTake(chunkFree, portMAX_DELAY);
+    static int next = 0;
+    uint16_t *buf = chunk[next];
+    next ^= 1;
+    return buf;
+}
+
+static void sendChunk(uint16_t *buf, int y, int rows) {
         uint8_t ca[4] = {0, 0, (W - 1) >> 8, (W - 1) & 0xff};
         int r0 = y + Y_GAP, r1 = y + rows - 1 + Y_GAP;
         uint8_t ra[4] = {(uint8_t)(r0 >> 8), (uint8_t)r0, (uint8_t)(r1 >> 8), (uint8_t)r1};
         cmd(0x2a, ca, 4);
         cmd(0x2b, ra, 4);
         esp_lcd_panel_io_tx_color(io, 0x32 << 24 | 0x2c << 8, buf, W * rows * 2);
+}
+
+void displaySendBand(uint16_t *buf, int y, int rows) {
+    // The panel takes RGB565 big-endian; two pixels per 32-bit word.
+    uint32_t *p = (uint32_t *)buf;
+    for (int i = 0; i < W * rows / 2; i++) {
+        uint32_t v = p[i];
+        p[i] = ((v & 0x00ff00ffu) << 8) | ((v >> 8) & 0x00ff00ffu);
+    }
+    sendChunk(buf, y, rows);
+}
+
+void displayFlush(const uint16_t *fb, int y0, int y1) {
+    for (int y = y0; y < y1; y += CHUNK_ROWS) {
+        int rows = y1 - y < CHUNK_ROWS ? y1 - y : CHUNK_ROWS;
+        uint16_t *buf = displayBand();
+        // The panel takes RGB565 big-endian.
+        const uint16_t *src = fb + y * W;
+        for (int i = 0; i < W * rows; i++) buf[i] = (uint16_t)(src[i] << 8 | src[i] >> 8);
+        sendChunk(buf, y, rows);
     }
 }
 

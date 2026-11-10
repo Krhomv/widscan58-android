@@ -35,6 +35,10 @@ public:
     void update(const Scanner &sc, uint32_t nowMs);
     /** Draws the regions in mask; returns them. */
     int draw(int mask, uint32_t nowMs);
+    /** The plot in bands: preparePlot once per frame, then drawPlot for each
+     *  band the canvas is set to (Canvas::setBand). */
+    void preparePlot();
+    void drawPlot(uint32_t nowMs);
 
     /** A tap at x, y; returns the regions to redraw. *settingsChanged when
      *  settings must be saved, *resetHolds / *retry for the caller to act on. */
@@ -71,7 +75,8 @@ private:
 
     float fx(float mhz) const;
     void drawStatus(uint32_t nowMs);
-    void drawPlot(uint32_t nowMs);
     void drawRows();
+    int16_t yl[PW], ym[PW];  // trace rows, -1 where not scanned
+    uint16_t wfLut[256];
     void boxGeometry(int row, int ch, int *x, int *w) const;
 };
