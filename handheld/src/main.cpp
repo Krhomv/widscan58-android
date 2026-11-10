@@ -117,6 +117,7 @@ void setup() {
     boardPowerHold();  // first: on battery the board is only powered while the key is held
     esp_log_level_set("*", ESP_LOG_NONE);
     Serial.begin(115200);  // USB CDC: status lines for debugging
+    Serial.setTxTimeoutMs(0);  // never wait for a PC that is not reading
     lock = xSemaphoreCreateMutex();
 
     Link.setRxBufferSize(16384);
@@ -232,10 +233,14 @@ void loop() {
     }
     lastDraw = now;
 
+    static uint32_t usUpdate, usDraw, usFlush;
+    uint32_t t0 = micros();
     xSemaphoreTake(lock, portMAX_DELAY);
     uint32_t lastFrame = scanner.lastFrameMs;
     ui->update(scanner, now);
     xSemaphoreGive(lock);
+    uint32_t t1 = micros();
+    usUpdate += t1 - t0;
 
     // The link: claim the scanner at boot and whenever its data stops. Until
     // the first frame it keeps trying every 3 s (the C5 may boot later, or
@@ -262,15 +267,27 @@ void loop() {
     if (mask & R_STATUS) lastStatus = now;
     if (mask & R_ROWS) lastRows = now;
     forced = 0;
+    uint32_t t2 = micros();
     ui->draw(mask, now);
+    uint32_t t3 = micros();
     flushRegions(mask);
+    usDraw += t3 - t2;
+    usFlush += micros() - t3;
     frames++;
 
     if (now - lastLog >= 5000) {
-        Serial.printf("fps %.1f, frames %u, crc errors %u, skipped %u, rotations %.1f/s, link drops %u\n",
-                      frames * 1000.0f / (now - lastLog), (unsigned)parser.frames, (unsigned)parser.crcErrors,
-                      (unsigned)parser.skipped, scanner.rotationHz, (unsigned)scanner.drops);
+        // Only when a terminal has room for it: a full USB buffer must never stall the screen.
+        char line[200];
+        unsigned f = frames ? frames : 1;
+        int n = snprintf(line, sizeof(line),
+                         "fps %.1f (update %u, draw %u, flush %u us), frames %u, crc errors %u, skipped %u, "
+                         "rotations %.1f/s, link drops %u\n",
+                         frames * 1000.0f / (now - lastLog), (unsigned)(usUpdate / f), (unsigned)(usDraw / f),
+                         (unsigned)(usFlush / f), (unsigned)parser.frames, (unsigned)parser.crcErrors,
+                         (unsigned)parser.skipped, scanner.rotationHz, (unsigned)scanner.drops);
+        if (Serial && Serial.availableForWrite() >= n) Serial.write((const uint8_t *)line, n);
         lastLog = now;
         frames = 0;
+        usUpdate = usDraw = usFlush = 0;
     }
 }
