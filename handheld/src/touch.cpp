@@ -28,5 +28,9 @@ bool touchRead(int *x, int *y) {
     // Landscape, as Waveshare's examples: mirror y, then swap.
     *x = 599 - ry;
     *y = rx;
+    if (UPSIDE_DOWN) {
+        *x = 599 - *x;
+        *y = 449 - *y;
+    }
     return true;
 }

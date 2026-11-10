@@ -17,6 +17,9 @@
 #define EXIO_TOUCH_RESET 1
 #define FT6336_ADDR 0x38
 #define PIN_TOUCH_INT 3
+// The picture turned 180 degrees: USB-C at the top (the panel's native
+// landscape has it at the bottom). Display and touch both follow it.
+#define UPSIDE_DOWN 1
 
 // RM690B0 AMOLED on QSPI.
 #define PIN_LCD_CS 9

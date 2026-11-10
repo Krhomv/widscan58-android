@@ -59,15 +59,29 @@ static bool IRAM_ATTR doneCb(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_d
     return woken == pdTRUE;
 }
 
+static const int H = 450;
+
 static void busBand(uint16_t *buf, int y, int rows, bool swap) {
+    const int n = W * rows;
     if (swap) {
-        // RGB565 big-endian; two pixels per 32-bit word.
-        uint32_t *p = (uint32_t *)buf;
-        for (int i = 0; i < W * rows / 2; i++) {
-            uint32_t v = p[i];
-            p[i] = ((v & 0x00ff00ffu) << 8) | ((v >> 8) & 0x00ff00ffu);
+        // RGB565 big-endian.
+        if (UPSIDE_DOWN) {
+            // Turned 180 degrees: reversing the whole band reverses both its
+            // rows and each row; it goes to the mirrored rows below.
+            for (int i = 0, j = n - 1; i < j; i++, j--) {
+                uint16_t a = buf[i], b = buf[j];
+                buf[i] = (uint16_t)(b << 8 | b >> 8);
+                buf[j] = (uint16_t)(a << 8 | a >> 8);
+            }
+        } else {
+            uint32_t *p = (uint32_t *)buf;  // two pixels per 32-bit word
+            for (int i = 0; i < n / 2; i++) {
+                uint32_t v = p[i];
+                p[i] = ((v & 0x00ff00ffu) << 8) | ((v >> 8) & 0x00ff00ffu);
+            }
         }
     }
+    if (UPSIDE_DOWN) y = H - y - rows;
     busWindow(0x2a, 0, W - 1);
     busWindow(0x2b, y + Y_GAP, y + rows - 1 + Y_GAP);
     esp_lcd_panel_io_tx_color(io, 0x32 << 24 | 0x2c << 8, buf, W * rows * 2);
@@ -211,9 +225,14 @@ void displayFlush(const uint16_t *fb, int y0, int y1) {
     for (int y = y0; y < y1; y += CHUNK_ROWS) {
         int rows = y1 - y < CHUNK_ROWS ? y1 - y : CHUNK_ROWS;
         uint16_t *buf = displayBand();
-        // The panel takes RGB565 big-endian.
+        // The panel takes RGB565 big-endian; upside down, the band reversed
+        // (busBand mirrors its rows).
         const uint16_t *src = fb + y * W;
-        for (int i = 0; i < W * rows; i++) buf[i] = (uint16_t)(src[i] << 8 | src[i] >> 8);
+        const int n = W * rows;
+        if (UPSIDE_DOWN)
+            for (int i = 0; i < n; i++) buf[n - 1 - i] = (uint16_t)(src[i] << 8 | src[i] >> 8);
+        else
+            for (int i = 0; i < n; i++) buf[i] = (uint16_t)(src[i] << 8 | src[i] >> 8);
         sendBand(buf, y, rows, false);
     }
 }
