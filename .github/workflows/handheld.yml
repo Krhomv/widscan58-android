@@ -51,7 +51,7 @@ jobs:
           B=.pio/build/waveshare-amoled-241
           APP0=$(find ~/.platformio/packages -name boot_app0.bin | head -1)
           python -m esptool --chip esp32s3 merge_bin -o widscan58-handheld-${{ github.run_number }}.bin \
-            --flash_mode qio --flash_size 16MB \
+            --flash_mode dio --flash_size 16MB \
             0x0 $B/bootloader.bin 0x8000 $B/partitions.bin 0xe000 "$APP0" 0x10000 $B/firmware.bin
 
       - uses: actions/upload-artifact@v4
