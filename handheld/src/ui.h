@@ -2,6 +2,7 @@
 // a row of channel boxes per FPV platform coloured by occupancy. Drawing and
 // touch only; main.cpp owns the hardware. GPL-3.0-or-later.
 #pragma once
+#include <string.h>
 #include <math.h>
 #include <stdint.h>
 #include "gfx.h"
@@ -29,7 +30,7 @@ class Ui {
 public:
     static const int W = 600, H = 450;
     static const int LX = 74, PW = 520;  // plot left and width
-    Ui(Canvas &c, Settings &s) : c(c), set(s) {}
+    Ui(Canvas &c, Settings &s) : c(c), set(s) { memset(wf, WF_EMPTY, sizeof(wf)); }
 
     /** Takes what it needs from the scanner (call with it locked). */
     void update(const Scanner &sc, uint32_t nowMs);
@@ -61,6 +62,7 @@ private:
     bool scanning = true;
 
     static const int WF_ROWS = 98;
+    static const uint8_t WF_EMPTY = 0;  // drawn black, as before any data
     uint8_t wf[WF_ROWS][PW];  // newest at wfHead; 0 = not scanned, else spectrum code
     int wfHead = 0;
     uint32_t wfLastMs = 0;

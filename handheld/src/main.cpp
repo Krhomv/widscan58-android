@@ -135,7 +135,7 @@ void setup() {
     canvas = new Canvas(fb, Ui::W, Ui::H);
     // In internal RAM if it fits (large allocations default to PSRAM): the
     // plot reads its arrays for every band.
-    void *uiMem = heap_caps_malloc(sizeof(Ui), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    void *uiMem = heap_caps_calloc(1, sizeof(Ui), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     ui = uiMem ? new (uiMem) Ui(*canvas, settings) : new Ui(*canvas, settings);
     touchInit();
     message("Widscan58");
