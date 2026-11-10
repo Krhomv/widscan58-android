@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include "board.h"
 #include "driver/spi_master.h"
+#include "esp_lcd_panel_io.h"
 #include "esp_heap_caps.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
@@ -19,7 +20,7 @@ static const int SLOTS = 3;
 // QSPI framing: a write is opcode 0x02 (registers, one line) or 0x32 (pixels,
 // data on four lines), then the command in the middle byte of a 24-bit address.
 
-static spi_device_handle_t dev;
+static esp_lcd_panel_io_handle_t io;
 static uint16_t *slots[SLOTS];
 static int nextSlot;
 static SemaphoreHandle_t freeSlots;  // band buffers the caller may draw into
@@ -38,14 +39,10 @@ struct Job {
     int16_t y, rows;
 };
 
+// esp_lcd's SPI panel IO (the framing it uses is the one this panel answers
+// to; a hand-rolled spi_master version left the panel dark).
 static void busCmd(uint8_t c, const uint8_t *data, size_t n) {
-    spi_transaction_t t = {};
-    t.cmd = 0x02;
-    t.addr = (uint32_t)c << 8;
-    t.flags = SPI_TRANS_USE_TXDATA;
-    for (size_t i = 0; i < n && i < 4; i++) t.tx_data[i] = data[i];
-    t.length = n * 8;
-    spi_device_transmit(dev, &t);
+    esp_lcd_panel_io_tx_param(io, 0x02 << 24 | c << 8, n ? data : nullptr, n);
 }
 
 static void busWindow(uint8_t c, int a, int b) {
@@ -53,33 +50,13 @@ static void busWindow(uint8_t c, int a, int b) {
     busCmd(c, d, 4);
 }
 
-// Bands are queued, not waited for: the next band is byte-swapped while the
-// previous one is on the bus. Each slot's three transactions (column window,
-// row window, pixels) stay valid until collected.
-static spi_transaction_t trans[SLOTS][3];
-static int inflight;
-
-static void collectOne() {
-    spi_transaction_t *r;
-    spi_device_get_trans_result(dev, &r, portMAX_DELAY);
-    inflight--;
-    if (r->user) xSemaphoreGive(freeSlots);  // a band's pixels: its buffer is free
-}
-
-static void collectAll() {
-    while (inflight) collectOne();
-}
-
-static void windowTrans(spi_transaction_t &t, uint8_t c, int a, int b) {
-    t = {};
-    t.flags = SPI_TRANS_USE_TXDATA;
-    t.cmd = 0x02;
-    t.addr = (uint32_t)c << 8;
-    t.tx_data[0] = (uint8_t)(a >> 8);
-    t.tx_data[1] = (uint8_t)a;
-    t.tx_data[2] = (uint8_t)(b >> 8);
-    t.tx_data[3] = (uint8_t)b;
-    t.length = 32;
+// A band's pixels are queued; its buffer is free when the transfer is done.
+// The next band is byte-swapped meanwhile (its window commands then wait for
+// the transfer, as esp_lcd sends commands only on an idle bus).
+static bool IRAM_ATTR doneCb(esp_lcd_panel_io_handle_t, esp_lcd_panel_io_event_data_t *, void *) {
+    BaseType_t woken = pdFALSE;
+    xSemaphoreGiveFromISR(freeSlots, &woken);
+    return woken == pdTRUE;
 }
 
 static void busBand(uint16_t *buf, int y, int rows, bool swap) {
@@ -91,22 +68,9 @@ static void busBand(uint16_t *buf, int y, int rows, bool swap) {
             p[i] = ((v & 0x00ff00ffu) << 8) | ((v >> 8) & 0x00ff00ffu);
         }
     }
-    int k = 0;
-    while (k < SLOTS - 1 && slots[k] != buf) k++;
-    spi_transaction_t *t = trans[k];
-    windowTrans(t[0], 0x2a, 0, W - 1);
-    windowTrans(t[1], 0x2b, y + Y_GAP, y + rows - 1 + Y_GAP);
-    t[2] = {};
-    t[2].flags = SPI_TRANS_MODE_QIO;
-    t[2].cmd = 0x32;
-    t[2].addr = 0x2c << 8;
-    t[2].tx_buffer = buf;
-    t[2].length = W * rows * 16;
-    t[2].user = buf;
-    for (int i = 0; i < 3; i++) {
-        spi_device_queue_trans(dev, &t[i], portMAX_DELAY);
-        inflight++;
-    }
+    busWindow(0x2a, 0, W - 1);
+    busWindow(0x2b, y + Y_GAP, y + rows - 1 + Y_GAP);
+    esp_lcd_panel_io_tx_color(io, 0x32 << 24 | 0x2c << 8, buf, W * rows * 2);
 }
 
 static void cmd(uint8_t c, const uint8_t *data = nullptr, size_t n = 0) { busCmd(c, data, n); }
@@ -119,18 +83,19 @@ static bool busInit() {
     bus.data2_io_num = PIN_LCD_D2;
     bus.data3_io_num = PIN_LCD_D3;
     bus.max_transfer_sz = W * CHUNK_ROWS * 2;
-    bus.flags = SPICOMMON_BUSFLAG_QUAD;
     if (spi_bus_initialize(SPI2_HOST, &bus, SPI_DMA_CH_AUTO) != ESP_OK) return false;
 
-    spi_device_interface_config_t dc = {};
-    dc.command_bits = 8;
-    dc.address_bits = 24;
-    dc.mode = 0;
-    dc.clock_speed_hz = 40 * 1000 * 1000;
-    dc.spics_io_num = PIN_LCD_CS;
-    dc.queue_size = SLOTS * 3 + 1;
-    dc.flags = SPI_DEVICE_HALFDUPLEX;
-    if (spi_bus_add_device(SPI2_HOST, &dc, &dev) != ESP_OK) return false;
+    esp_lcd_panel_io_spi_config_t cfg = {};
+    cfg.cs_gpio_num = PIN_LCD_CS;
+    cfg.dc_gpio_num = -1;
+    cfg.spi_mode = 0;
+    cfg.pclk_hz = 40 * 1000 * 1000;
+    cfg.trans_queue_depth = 4;
+    cfg.on_color_trans_done = doneCb;
+    cfg.lcd_cmd_bits = 32;
+    cfg.lcd_param_bits = 8;
+    cfg.flags.quad_mode = true;
+    if (esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)SPI2_HOST, &cfg, &io) != ESP_OK) return false;
 
     exioWrite(EXIO_PANEL_RESET, true);
     delay(20);
@@ -175,11 +140,6 @@ static bool busInit() {
 static void displayTask(void *) {
     Job j;
     for (;;) {
-        // Nothing to do but transfers in flight: collect them (frees buffers).
-        if (inflight && !uxQueueMessagesWaiting(jobs)) {
-            collectOne();
-            continue;
-        }
         xQueueReceive(jobs, &j, portMAX_DELAY);
         switch (j.type) {
             case JOB_INIT:
@@ -190,7 +150,6 @@ static void displayTask(void *) {
                 busBand(j.buf, j.y, j.rows, j.swap);
                 break;
             case JOB_CMD:
-                collectAll();
                 busCmd(j.c, j.d, j.n);
                 if (j.delayMs) delay(j.delayMs);
                 xSemaphoreGive(jobDone);
