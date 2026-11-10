@@ -8,7 +8,7 @@
 #include "scanner.h"
 
 struct Settings {
-    static const int ROWS = 6;
+    static const int ROWS = 3;
     uint8_t rows[ROWS];  // indexes into PLATFORMS
     uint8_t brightness;  // index into BRIGHTNESS
 };
@@ -56,7 +56,7 @@ private:
     uint32_t drops = 0, dropsAt = 0, lastDrops = 0;
     bool scanning = true;
 
-    static const int WF_ROWS = 68;
+    static const int WF_ROWS = 98;
     uint8_t wf[WF_ROWS][PW];  // newest at wfHead; 0 = not scanned, else spectrum code
     int wfHead = 0;
     uint32_t wfLastMs = 0;

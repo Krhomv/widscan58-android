@@ -10,17 +10,17 @@ static const float F0 = 5640, F1 = 5950;
 
 // Layout (see the mockup in README.md).
 static const int STATUS_H = 28;
-static const int SPEC_T = 34, SPEC_B = 172;  // spectrum plot rows
-static const int AXIS_Y = 186;              // MHz labels' baseline
-static const int WF_T = 192;                // waterfall top (Ui::WF_ROWS tall)
-static const int ROWS_T = 266, ROW_H = 27;  // channel rows
+static const int SPEC_T = 34, SPEC_B = 222;  // spectrum plot rows
+static const int AXIS_Y = 236;              // MHz labels' baseline
+static const int WF_T = 242;                // waterfall top (Ui::WF_ROWS tall)
+static const int ROWS_T = 347, ROW_H = 27;  // channel rows
 static const int LEGEND_Y = 442;
 
 RegionRows regionRows(Region r) {
     switch (r) {
         case R_STATUS: return {0, STATUS_H};
-        case R_PLOT: return {STATUS_H, 262};
-        default: return {262, Ui::H};
+        case R_PLOT: return {STATUS_H, 344};
+        default: return {344, Ui::H};
     }
 }
 
@@ -278,7 +278,7 @@ void Ui::drawPlot(uint32_t nowMs) {
         for (int x = 0; x < PW; x++) p[x] = lut[row[x]];
     }
     c.text(font_small, 8, WF_T + 12, "Waterfall", MUTED);
-    c.text(font_small, 8, WF_T + 26, "last 2 s", MUTED);
+    c.text(font_small, 8, WF_T + 26, "last 3 s", MUTED);
 
     // Messages over the spectrum.
     const char *msg = 0;
