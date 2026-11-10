@@ -237,19 +237,21 @@ void loop() {
     ui->update(scanner, now);
     xSemaphoreGive(lock);
 
-    // The link: claim the scanner at boot and whenever its data stops, five
-    // tries, then wait for a tap (the phone app may be using it over USB).
+    // The link: claim the scanner at boot and whenever its data stops. Until
+    // the first frame it keeps trying every 3 s (the C5 may boot later, or
+    // miss the first claims while it starts). Once data has come and gone,
+    // five tries, then wait for a tap: the phone app may be using it over USB.
     bool fresh = lastFrame && now - lastFrame < 2000;
     if (fresh) {
         claims = 0;
         ui->link = LINK_OK;
-    } else if (claims < 5) {
+    } else if (!lastFrame || claims < 5) {
         if ((int32_t)(now - claimAt) >= 0) {
             claimScanner();
             claims++;
             claimAt = now + 3000;
         }
-        ui->link = LINK_WAITING;
+        ui->link = claims > 5 ? LINK_LOST : LINK_WAITING;
     } else {
         ui->link = LINK_LOST;
     }
