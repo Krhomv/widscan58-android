@@ -6,6 +6,17 @@
 
 static inline float codeDb(uint8_t c) { return c * 0.5f - 127.5f; }
 
+// Linear power of each spectrum code: powf is slow on the S3 (no double FPU).
+static const float *linTable() {
+    static float t[256];
+    static bool done;
+    if (!done) {
+        for (int k = 0; k < 256; k++) t[k] = powf(10.0f, codeDb((uint8_t)k) / 10.0f);
+        done = true;
+    }
+    return t;
+}
+
 void Scanner::onFrame(uint8_t type, const uint8_t *p, uint16_t len, uint32_t nowMs) {
     lastFrameMs = nowMs ? nowMs : 1;
     if (type == FRAME_SPECTRUM && len >= 20) {
@@ -37,8 +48,9 @@ void Scanner::onFrame(uint8_t type, const uint8_t *p, uint16_t len, uint32_t now
         s->n = n;
         s->updatedMs = nowMs;
         memcpy(s->live, codes, n);
+        const float *lt = linTable();
         for (int j = 0; j < n; j++) {
-            float lin = powf(10.0f, codeDb(codes[j]) / 10.0f);
+            float lin = lt[codes[j]];
             if (fresh) {
                 s->maxHold[j] = codes[j];
                 s->avg[j] = lin;
@@ -67,14 +79,14 @@ void Scanner::resetHolds() {
     for (auto &s : seg)
         if (s.used) {
             memcpy(s.maxHold, s.live, s.n);
-            for (int j = 0; j < s.n; j++) s.avg[j] = powf(10.0f, codeDb(s.live[j]) / 10.0f);
+            for (int j = 0; j < s.n; j++) s.avg[j] = linTable()[s.live[j]];
         }
 }
 
-void Scanner::composite(float f0, float f1, int cols, float *live, float *maxHold, float *avg, uint32_t nowMs) const {
+void Scanner::composite(float f0, float f1, int cols, float *live, float *maxHold, float *avgLin, uint32_t nowMs) const {
     const float colMhz = (f1 - f0) / cols;
     for (int x = 0; x < cols; x++) {
-        live[x] = maxHold[x] = avg[x] = NAN;
+        live[x] = maxHold[x] = avgLin[x] = NAN;
         float fa = f0 + x * colMhz, fb = fa + colMhz, fc = fa + colMhz / 2;
         float bestDist = INFINITY;
         const Segment *best = 0;
@@ -108,6 +120,6 @@ void Scanner::composite(float f0, float f1, int cols, float *live, float *maxHol
         }
         live[x] = codeDb(l);
         maxHold[x] = codeDb(m);
-        avg[x] = 10.0f * log10f(sum / (kb - ka + 1) + 1e-30f);
+        avgLin[x] = sum / (kb - ka + 1);
     }
 }

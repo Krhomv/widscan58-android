@@ -1,16 +1,6 @@
 // GPL-3.0-or-later.
 #include "gfx.h"
 
-uint16_t mix(uint16_t a, uint16_t b, uint8_t alpha) {
-    if (alpha == 255) return a;
-    if (alpha == 0) return b;
-    uint32_t ar = a >> 11, ag = (a >> 5) & 63, ab = a & 31;
-    uint32_t br = b >> 11, bg = (b >> 5) & 63, bb = b & 31;
-    uint32_t r = (ar * alpha + br * (255 - alpha) + 127) / 255;
-    uint32_t g = (ag * alpha + bg * (255 - alpha) + 127) / 255;
-    uint32_t bl = (ab * alpha + bb * (255 - alpha) + 127) / 255;
-    return (uint16_t)(r << 11 | g << 5 | bl);
-}
 
 void Canvas::fill(int x, int y, int fw, int fh, uint16_t c) {
     if (x < 0) fw += x, x = 0;

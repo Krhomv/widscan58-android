@@ -38,6 +38,7 @@ public:
     /** The band on `cols` columns from f0 to f1 MHz, each from the segment
      *  whose LO is nearest (the analog filter rolls off at segment edges), as
      *  the web UI's panorama: live and max hold are the strongest bin in the
-     *  column, avg the mean power. NaN where no segment reaches. */
-    void composite(float f0Mhz, float f1Mhz, int cols, float *live, float *maxHold, float *avg, uint32_t nowMs) const;
+     *  column (dBFS), avgLin the mean linear power. NaN where no segment
+     *  reaches. */
+    void composite(float f0Mhz, float f1Mhz, int cols, float *live, float *maxHold, float *avgLin, uint32_t nowMs) const;
 };

@@ -19,7 +19,15 @@ static SemaphoreHandle_t lock;  // the scanner model, between the link task and 
 static Scanner scanner;
 static Settings settings;
 static Preferences prefs;
-static uint16_t *fb;
+static uint16_t *fbs[2];  // drawn in turn: one is drawn while the other is sent to the panel
+static int cur;           // the one being drawn
+static SemaphoreHandle_t panelLock;  // the panel bus: the flush task vs commands from loop()
+static SemaphoreHandle_t flushDone;  // given when the flush task is idle
+static QueueHandle_t flushQueue;
+struct FlushJob {
+    const uint16_t *fb;
+    int mask;
+};
 static Canvas *canvas;
 static Ui *ui;
 
@@ -82,7 +90,7 @@ static int batteryPercent(float v) {
     return 100;
 }
 
-static void flushRegions(int mask) {
+static void flushRegions(const uint16_t *fb, int mask) {
     for (Region r : {R_STATUS, R_PLOT, R_ROWS})
         if (mask & r) {
             RegionRows rr = regionRows(r);
@@ -90,10 +98,38 @@ static void flushRegions(int mask) {
         }
 }
 
+/** Sends finished frames to the panel while loop() draws the next one. */
+static void flushTask(void *) {
+    FlushJob job;
+    for (;;) {
+        xQueueReceive(flushQueue, &job, portMAX_DELAY);
+        xSemaphoreTake(panelLock, portMAX_DELAY);
+        flushRegions(job.fb, job.mask);
+        xSemaphoreGive(panelLock);
+        xSemaphoreGive(flushDone);
+    }
+}
+
+/** Waits for the frame being sent, then takes the panel (for commands). */
+static void panelTake() {
+    xSemaphoreTake(flushDone, portMAX_DELAY);
+    xSemaphoreGive(flushDone);
+    xSemaphoreTake(panelLock, portMAX_DELAY);
+}
+static void panelGive() { xSemaphoreGive(panelLock); }
+
+static void brightness(uint8_t level) {
+    panelTake();
+    displayBrightness(level);
+    panelGive();
+}
+
 static void message(const char *text) {
+    panelTake();
     canvas->fill(0, 0, Ui::W, Ui::H, 0);
     canvas->text(font_big, Ui::W / 2, Ui::H / 2 + 8, text, rgb(232, 234, 237), CENTER);
-    displayFlush(fb, 0, Ui::H);
+    displayFlush(canvas->px, 0, Ui::H);
+    panelGive();
 }
 
 /** Power off from the battery. On USB power the board stays up: sleep the
@@ -101,14 +137,18 @@ static void message(const char *text) {
 static void powerOff(const char *why) {
     message(why);
     delay(800);
-    displayBrightness(0);
+    brightness(0);
     boardPowerOff();
     delay(300);
+    panelTake();
     displaySleep(true);
+    panelGive();
     while (powerKeyDown()) delay(20);
     while (!powerKeyDown()) delay(20);
+    panelTake();
     displaySleep(false);
-    displayBrightness(BRIGHTNESS[settings.brightness]);
+    panelGive();
+    brightness(BRIGHTNESS[settings.brightness]);
     while (powerKeyDown()) delay(20);
     boardPowerHold();
 }
@@ -125,18 +165,23 @@ void setup() {
 
     loadSettings();
     boardI2cInit();
-    fb = (uint16_t *)heap_caps_malloc(Ui::W * Ui::H * 2, MALLOC_CAP_SPIRAM);
-    if (!fb || !displayInit()) {
+    for (auto &f : fbs) f = (uint16_t *)heap_caps_calloc(Ui::W * Ui::H, 2, MALLOC_CAP_SPIRAM);
+    panelLock = xSemaphoreCreateMutex();
+    flushDone = xSemaphoreCreateBinary();
+    xSemaphoreGive(flushDone);
+    flushQueue = xQueueCreate(1, sizeof(FlushJob));
+    if (!fbs[0] || !fbs[1] || !displayInit()) {
         Serial.println("display init failed");
         for (;;) delay(1000);
     }
-    canvas = new Canvas(fb, Ui::W, Ui::H);
+    canvas = new Canvas(fbs[cur], Ui::W, Ui::H);
     ui = new Ui(*canvas, settings);
     touchInit();
     message("Widscan58");
     displayBrightness(BRIGHTNESS[settings.brightness]);
 
     xTaskCreatePinnedToCore(linkTask, "link", 4096, nullptr, 5, nullptr, 0);
+    xTaskCreatePinnedToCore(flushTask, "flush", 4096, nullptr, 4, nullptr, 0);
     analogReadResolution(12);
 }
 
@@ -153,7 +198,7 @@ void loop() {
     if (!key) {
         if (keyArmed && keyDownAt && now - keyDownAt < 1500) {
             screenOff = !screenOff;
-            displayBrightness(screenOff ? 0 : BRIGHTNESS[settings.brightness]);
+            brightness(screenOff ? 0 : BRIGHTNESS[settings.brightness]);
             lastActivity = now;
             dimmed = false;
         }
@@ -182,13 +227,13 @@ void loop() {
         if (touching && !down && !screenOff) {
             if (dimmed) {
                 dimmed = false;
-                displayBrightness(BRIGHTNESS[settings.brightness]);
+                brightness(BRIGHTNESS[settings.brightness]);
             } else {
                 bool changed, reset, retry;
                 forced |= ui->tap(touchX, touchY, now, &changed, &reset, &retry);
                 if (changed) {
                     saveSettings();
-                    displayBrightness(BRIGHTNESS[settings.brightness]);
+                    brightness(BRIGHTNESS[settings.brightness]);
                 }
                 if (reset) {
                     xSemaphoreTake(lock, portMAX_DELAY);
@@ -207,7 +252,7 @@ void loop() {
     // Dim after 3 minutes without a touch (and less OLED wear).
     if (!dimmed && !screenOff && now - lastActivity > 180000) {
         dimmed = true;
-        displayBrightness(BRIGHTNESS[BRIGHTNESS_LEVELS - 1]);
+        brightness(BRIGHTNESS[BRIGHTNESS_LEVELS - 1]);
     }
 
     // Battery, every 2 s. Off below 3.3 V for 20 s, to spare the cell.
@@ -220,6 +265,7 @@ void loop() {
             if (!lowSince) lowSince = now;
             else if (now - lowSince > 20000) {
                 powerOff("Battery empty");
+                forced = R_STATUS | R_PLOT | R_ROWS;
                 lowSince = 0;
             }
         } else {
@@ -262,16 +308,27 @@ void loop() {
         ui->link = LINK_LOST;
     }
 
-    int mask = R_PLOT | forced;
-    if (now - lastStatus >= 500) mask |= R_STATUS;
-    if (now - lastRows >= 250) mask |= R_ROWS;
-    if (mask & R_STATUS) lastStatus = now;
-    if (mask & R_ROWS) lastRows = now;
+    // Each region due is drawn in both buffers, in turn, so neither goes stale.
+    static int pending[2];
+    int due = R_PLOT | forced;
+    if (now - lastStatus >= 500) due |= R_STATUS;
+    if (now - lastRows >= 250) due |= R_ROWS;
+    if (due & R_STATUS) lastStatus = now;
+    if (due & R_ROWS) lastRows = now;
     forced = 0;
+    pending[0] |= due;
+    pending[1] |= due;
+    int mask = pending[cur];
+    pending[cur] = 0;
+    canvas->px = fbs[cur];
     uint32_t t2 = micros();
     ui->draw(mask, now);
     uint32_t t3 = micros();
-    flushRegions(mask);
+    // Wait for the other buffer's flush (time the panel bus is the limit), then hand this one over.
+    xSemaphoreTake(flushDone, portMAX_DELAY);
+    FlushJob job = {fbs[cur], mask};
+    xQueueSend(flushQueue, &job, portMAX_DELAY);
+    cur ^= 1;
     usDraw += t3 - t2;
     usFlush += micros() - t3;
     frames++;
@@ -281,7 +338,7 @@ void loop() {
         char line[200];
         unsigned f = frames ? frames : 1;
         int n = snprintf(line, sizeof(line),
-                         "fps %.1f (update %u, draw %u, flush %u us), frames %u, crc errors %u, skipped %u, "
+                         "fps %.1f (update %u, draw %u, flush wait %u us), frames %u, crc errors %u, skipped %u, "
                          "rotations %.1f/s, link drops %u\n",
                          frames * 1000.0f / (now - lastLog), (unsigned)(usUpdate / f), (unsigned)(usDraw / f),
                          (unsigned)(usFlush / f), (unsigned)parser.frames, (unsigned)parser.crcErrors,

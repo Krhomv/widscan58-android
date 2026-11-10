@@ -66,7 +66,7 @@ static float percentile10(const float *v, int n) {
 }
 
 void Ui::update(const Scanner &sc, uint32_t nowMs) {
-    sc.composite(F0, F1, PW, live, maxH, avg, nowMs);
+    sc.composite(F0, F1, PW, live, maxH, avgLin, nowMs);
     rotationHz = sc.rotationHz;
     scanning = sc.running;
     if (sc.drops != lastDrops) {
@@ -74,7 +74,9 @@ void Ui::update(const Scanner &sc, uint32_t nowMs) {
         lastDrops = sc.drops;
     }
 
-    float fl = percentile10(avg, PW);
+    // The 10th percentile of linear power is that of dB: one log per frame.
+    float fl = percentile10(avgLin, PW);
+    if (!isnan(fl)) fl = 10.0f * log10f(fl + 1e-30f);
     if (!isnan(fl)) floorDb = isnan(floorDb) ? fl : floorDb + 0.05f * (fl - floorDb);
     if (!isnan(floorDb)) {
         // Keep the floor 8-18 dB above the bottom, moving in 10 dB steps.
@@ -104,8 +106,8 @@ void Ui::update(const Scanner &sc, uint32_t nowMs) {
             float sum = 0;
             int got = 0, total = b - a + 1;
             for (int x = a; x <= b; x++)
-                if (!isnan(avg[x])) {
-                    sum += powf(10.0f, avg[x] / 10.0f);
+                if (!isnan(avgLin[x])) {
+                    sum += avgLin[x];
                     got++;
                 }
             lev[r][j].db = total > 0 && got * 2 >= total && !isnan(floorDb) ? 10.0f * log10f(sum / got) - floorDb : NAN;
@@ -188,9 +190,23 @@ void Ui::drawPlot(uint32_t nowMs) {
     };
     char s[48];
 
+    // Trace heights first: the framebuffer is in PSRAM, so everything below
+    // walks it row by row (a column walk misses the cache on every pixel).
+    static int16_t yl[PW], ym[PW];
+    for (int x = 0; x < PW; x++) {
+        if (isnan(live[x])) {
+            yl[x] = ym[x] = -1;
+        } else {
+            yl[x] = (int16_t)dy(live[x]);
+            ym[x] = (int16_t)dy(maxH[x]);
+        }
+    }
     // Columns no LO reaches.
-    for (int x = 0; x < PW; x++)
-        if (isnan(live[x])) c.vline(LX + x, SPEC_T, SPEC_B - SPEC_T + 1, NOSCAN);
+    for (int y = SPEC_T; y <= SPEC_B; y++) {
+        uint16_t *row = c.px + y * W + LX;
+        for (int x = 0; x < PW; x++)
+            if (yl[x] < 0) row[x] = NOSCAN;
+    }
     // Grid and scale.
     for (int db = (int)bottomDb + 10; db < topDb; db += 10) {
         int y = dy((float)db);
@@ -210,25 +226,24 @@ void Ui::drawPlot(uint32_t nowMs) {
     c.text(font_small, 8, AXIS_Y, "MHz", MUTED);
 
     // Live trace: a fading fill under a line, then the max hold line.
-    static uint16_t fillC[SPEC_B + 1];
-    static uint8_t fillA[SPEC_B + 1];
+    const uint16_t fillC = rgb(56, 152, 255);
     for (int y = SPEC_T; y <= SPEC_B; y++) {
         float t = (float)(y - SPEC_T) / (SPEC_B - SPEC_T);
-        fillC[y] = rgb(56, 152, 255);
-        fillA[y] = (uint8_t)(150 - 140 * t);
+        uint8_t a = (uint8_t)(150 - 140 * t);
+        uint16_t *row = c.px + y * W + LX;
+        for (int x = 0; x < PW; x++)
+            if (yl[x] >= 0 && y > yl[x]) row[x] = mix(fillC, row[x], a);
     }
     int prevL = -1, prevM = -1;
     for (int x = 0; x < PW; x++) {
-        if (isnan(live[x])) {
+        if (yl[x] < 0) {
             prevL = prevM = -1;
             continue;
         }
-        int yl = dy(live[x]), ym = dy(maxH[x]);
-        for (int y = yl + 1; y <= SPEC_B; y++) c.blendPixel(LX + x, y, fillC[y], fillA[y]);
-        c.span(LX + x, prevL < 0 ? yl : prevL, yl, BLUE);
-        c.span(LX + x, prevM < 0 ? ym : prevM, ym, AMBER);
-        prevL = yl;
-        prevM = ym;
+        c.span(LX + x, prevL < 0 ? yl[x] : prevL, yl[x], BLUE);
+        c.span(LX + x, prevM < 0 ? ym[x] : prevM, ym[x], AMBER);
+        prevL = yl[x];
+        prevM = ym[x];
     }
 
     // Selected channel.

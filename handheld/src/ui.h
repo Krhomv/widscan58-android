@@ -49,7 +49,7 @@ private:
     Canvas &c;
     Settings &set;
 
-    float live[PW], maxH[PW], avg[PW];
+    float live[PW], maxH[PW], avgLin[PW];  // dBFS, dBFS, linear power
     float floorDb = NAN;    // band noise floor, smoothed
     float bottomDb = -100;  // spectrum scale
     float rotationHz = 0;
