@@ -80,7 +80,7 @@ void Scanner::composite(float f0, float f1, int cols, float *live, float *maxHol
         const Segment *best = 0;
         int ka = 0, kb = 0;
         for (const auto &s : seg) {
-            if (!s.used || nowMs - s.updatedMs > STALE_MS) continue;
+            if (!s.used || (int32_t)(nowMs - s.updatedMs) > (int32_t)STALE_MS) continue;
             float lo = s.loKhz / 1000.0f;
             float start = lo + s.startOffHz / 1e6f, bin = s.binHz / 1e6f;
             if (fc < start - bin / 2 || fc > start + (s.n - 0.5f) * bin) continue;

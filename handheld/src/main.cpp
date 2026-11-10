@@ -246,7 +246,8 @@ void loop() {
     // the first frame it keeps trying every 3 s (the C5 may boot later, or
     // miss the first claims while it starts). Once data has come and gone,
     // five tries, then wait for a tap: the phone app may be using it over USB.
-    bool fresh = lastFrame && now - lastFrame < 2000;
+    // Signed: the link task can stamp a frame after this loop read `now`.
+    bool fresh = lastFrame && (int32_t)(now - lastFrame) < 2000;
     if (fresh) {
         claims = 0;
         ui->link = LINK_OK;
