@@ -220,9 +220,35 @@ void loop() {
     if (now - lastBattery >= 2000 || !lastBattery) {
         lastBattery = now;
         float v = batteryVolts();
-        ui->usbPower = v > 4.35f;  // no cell: the charger's output
-        ui->batteryPct = batteryPercent(v);
-        if (v > 2.5f && v < 3.0f) {
+        // The charger's status pin only drives its LED, so charging is read
+        // from the cell voltage: plugging USB in lifts it at once by the
+        // charge current through the cell's resistance (a step up), and
+        // unplugging drops it again. A drop near 4.2 V is the charge ending.
+        static float vAvg;
+        static bool charging, full;
+        if (v > 4.35f) {  // no cell: the charger's output
+            ui->usbPower = true;
+            charging = full = false;
+        } else {
+            ui->usbPower = false;
+            if (vAvg == 0) vAvg = v;
+            float step = v - vAvg;
+            if (step > 0.04f) {
+                charging = true;
+                full = false;
+            } else if (step < -0.04f && charging) {
+                charging = false;
+                full = vAvg > 4.12f;  // still on USB, done
+            }
+            if (full && v < 4.0f) full = false;  // unplugged and used since
+            vAvg += 0.25f * (v - vAvg);
+        }
+        ui->charging = charging;
+        ui->full = full;
+        // While charging the cell reads high (the charge current): about
+        // 0.1 V at this board's 0.5 A.
+        ui->batteryPct = full ? 100 : batteryPercent(charging ? v - 0.1f : v);
+        if (!charging && v > 2.5f && v < 3.0f) {
             if (!lowSince) lowSince = now;
             else if (now - lowSince > 20000) {
                 powerOff("Battery empty");

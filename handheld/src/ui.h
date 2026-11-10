@@ -49,6 +49,7 @@ public:
     LinkState link = LINK_WAITING;
     int batteryPct = -1;  // -1: unknown
     bool usbPower = false;
+    bool charging = false, full = false;  // on USB, with a cell
 
 private:
     Canvas &c;

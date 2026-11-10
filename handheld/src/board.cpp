@@ -35,8 +35,8 @@ void exioWrite(int pin, bool high) {
 
 float batteryVolts() {
     uint32_t mv = 0;
-    for (int k = 0; k < 8; k++) mv += analogReadMilliVolts(PIN_BAT_ADC);
-    return mv / 8 * 3 / 1000.0f;
+    for (int k = 0; k < 32; k++) mv += analogReadMilliVolts(PIN_BAT_ADC);
+    return mv / 32 * 3 / 1000.0f;
 }
 
 bool powerKeyDown() { return digitalRead(PIN_POWER_KEY) == LOW; }
