@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <string.h>
+#include <new>
 #include "board.h"
 #include "display.h"
 #include "esp_log.h"
@@ -116,6 +117,7 @@ static void powerOff(const char *why) {
 void setup() {
     boardPowerHold();  // first: on battery the board is only powered while the key is held
     esp_log_level_set("*", ESP_LOG_NONE);
+    Serial.setTxBufferSize(1024);
     Serial.begin(115200);  // USB CDC: status lines for debugging
     Serial.setTxTimeoutMs(0);  // never wait for a PC that is not reading
     lock = xSemaphoreCreateMutex();
@@ -131,7 +133,10 @@ void setup() {
         for (;;) delay(1000);
     }
     canvas = new Canvas(fb, Ui::W, Ui::H);
-    ui = new Ui(*canvas, settings);
+    // In internal RAM if it fits (large allocations default to PSRAM): the
+    // plot reads its arrays for every band.
+    void *uiMem = heap_caps_malloc(sizeof(Ui), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    ui = uiMem ? new (uiMem) Ui(*canvas, settings) : new Ui(*canvas, settings);
     touchInit();
     message("Widscan58");
     displayBrightness(BRIGHTNESS[settings.brightness]);
@@ -234,7 +239,7 @@ void loop() {
     }
     lastDraw = now;
 
-    static uint32_t usUpdate, usDraw, usFlush;
+    static uint32_t usUpdate, usDraw, usFlush, usWait, usBandDraw, usSend;
     uint32_t t0 = micros();
     xSemaphoreTake(lock, portMAX_DELAY);
     uint32_t lastFrame = scanner.lastFrameMs;
@@ -285,10 +290,16 @@ void loop() {
     const int bandRows = displayBandRows();
     for (int y = rr.y0; y < rr.y1; y += bandRows) {
         int rows = rr.y1 - y < bandRows ? rr.y1 - y : bandRows;
+        uint32_t b0 = micros();
         uint16_t *band = displayBand();
+        uint32_t b1 = micros();
         canvas->setBand(band, y, y + rows);
         ui->drawPlot(now);
+        uint32_t b2 = micros();
         displaySendBand(band, y, rows);
+        usWait += b1 - b0;
+        usBandDraw += b2 - b1;
+        usSend += micros() - b2;
     }
     canvas->setFull(fb);
     usDraw += micros() - t3;
@@ -297,17 +308,18 @@ void loop() {
 
     if (now - lastLog >= 5000) {
         // Only when a terminal has room for it: a full USB buffer must never stall the screen.
-        char line[200];
+        char line[256];
         unsigned f = frames ? frames : 1;
         int n = snprintf(line, sizeof(line),
-                         "fps %.1f (update %u, plot %u, status+rows %u us), frames %u, crc errors %u, skipped %u, "
+                         "fps %.1f @%u MHz (update %u, plot %u = wait %u + draw %u + send %u, status+rows %u us), frames %u, crc errors %u, skipped %u, "
                          "rotations %.1f/s, link drops %u\n",
-                         frames * 1000.0f / (now - lastLog), (unsigned)(usUpdate / f), (unsigned)(usDraw / f),
+                         frames * 1000.0f / (now - lastLog), (unsigned)getCpuFrequencyMhz(), (unsigned)(usUpdate / f), (unsigned)(usDraw / f),
+                         (unsigned)(usWait / f), (unsigned)(usBandDraw / f), (unsigned)(usSend / f),
                          (unsigned)(usFlush / f), (unsigned)parser.frames, (unsigned)parser.crcErrors,
                          (unsigned)parser.skipped, scanner.rotationHz, (unsigned)scanner.drops);
         if (Serial && Serial.availableForWrite() >= n) Serial.write((const uint8_t *)line, n);
         lastLog = now;
         frames = 0;
-        usUpdate = usDraw = usFlush = 0;
+        usUpdate = usDraw = usFlush = usWait = usBandDraw = usSend = 0;
     }
 }
