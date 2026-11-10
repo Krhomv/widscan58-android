@@ -39,12 +39,14 @@ and the board powers off when the cell stays below 3.3 V for 20 seconds.
 
 ## Wiring
 
-| ESP32-C5 (XIAO) | Waveshare board |
+| ESP32-C5 (XIAO) | Waveshare UART connector (JST-SH 1.0, 4 pins) |
 |---|---|
-| GPIO11 / D6 (TX) | UART connector RXD (GPIO44) |
-| GPIO12 / D7 (RX) | UART connector TXD (GPIO43) |
-| 3V3 | 3V3 |
-| GND | GND |
+| GPIO11 / D6 (TX) | pin 1, RXD (GPIO44) |
+| GPIO12 / D7 (RX) | pin 2, TXD (GPIO43) |
+| 3V3 | pin 3, 3V3 |
+| GND | pin 4, GND |
+
+![Wiring](docs/wiring.png)
 
 The Waveshare board's 3.3 V regulator (MP1605, 2 A) powers the C5 too. Put
 the 18650 (with a protection board) on the board's MX1.25 battery connector;
