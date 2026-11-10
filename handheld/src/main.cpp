@@ -74,9 +74,10 @@ static void saveSettings() {
 // ---- Battery ----
 
 static int batteryPercent(float v) {
-    // A typical 18650 discharge curve at light load.
-    static const float V[] = {3.30f, 3.50f, 3.60f, 3.70f, 3.80f, 3.90f, 4.00f, 4.10f, 4.20f};
-    static const int P[] = {0, 8, 18, 35, 52, 66, 80, 92, 100};
+    // A typical 18650 discharge curve at light load, empty at 3.0 V (the C5
+    // and the screen both run down to there).
+    static const float V[] = {3.00f, 3.30f, 3.50f, 3.60f, 3.70f, 3.80f, 3.90f, 4.00f, 4.20f};
+    static const int P[] = {0, 5, 12, 25, 45, 62, 77, 90, 100};
     if (v <= V[0]) return 0;
     for (int k = 1; k < 9; k++)
         if (v < V[k]) return P[k - 1] + (int)((v - V[k - 1]) / (V[k] - V[k - 1]) * (P[k] - P[k - 1]));
@@ -215,13 +216,13 @@ void loop() {
         displayBrightness(BRIGHTNESS[BRIGHTNESS_LEVELS - 1]);
     }
 
-    // Battery, every 2 s. Off below 3.3 V for 20 s, to spare the cell.
+    // Battery, every 2 s. Off below 3.0 V for 20 s, to spare the cell.
     if (now - lastBattery >= 2000 || !lastBattery) {
         lastBattery = now;
         float v = batteryVolts();
         ui->usbPower = v > 4.35f;  // no cell: the charger's output
         ui->batteryPct = batteryPercent(v);
-        if (v > 2.5f && v < 3.3f) {
+        if (v > 2.5f && v < 3.0f) {
             if (!lowSince) lowSince = now;
             else if (now - lowSince > 20000) {
                 powerOff("Battery empty");

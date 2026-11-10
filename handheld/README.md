@@ -35,7 +35,7 @@ the C5's serial port, the same protocol the web UI uses over USB.
 | Power key, hold 2 s | Power off |
 
 The screen dims after 3 minutes without a touch (the first tap only wakes it),
-and the board powers off when the cell stays below 3.3 V for 20 seconds.
+and the board powers off when the cell stays below 3.0 V for 20 seconds.
 
 ## Wiring
 
@@ -43,18 +43,21 @@ and the board powers off when the cell stays below 3.3 V for 20 seconds.
 |---|---|
 | GPIO11 / D6 (TX) | pin 1, RXD (GPIO44) |
 | GPIO12 / D7 (RX) | pin 2, TXD (GPIO43) |
-| 3V3 | pin 3, 3V3 |
+| BAT+ pad (on the back) | pin 3, 3V3 |
 | GND | pin 4, GND |
 
 ![Wiring](docs/wiring.png)
 
-The Waveshare board's 3.3 V regulator (MP1605, 2 A) powers the C5 too. Put
-the 18650 (with a protection board) on the board's MX1.25 battery connector;
-its USB-C port charges it. Don't plug USB into the C5 while it runs from the
-display board's 3.3 V: flash and set it up first.
+The Waveshare board's 3.3 V regulator (MP1605, 2 A) powers the C5 too,
+through the XIAO's BAT+ pad: the XIAO ESP32-C5's 3V3 pin is an output and
+won't take power in. It runs fine from 3.3 V on BAT+. Put the 18650 (with a
+protection board) on the board's MX1.25 battery connector; its USB-C port
+charges it. Don't plug USB into the C5 while it's wired to the display board:
+flash and set it up first.
 
 The C5 boots in lap timer mode. The handheld sends `PROTOCOL MONITOR` to it at
-power on and whenever its data stops (five tries, then "tap to retry"). The C5
+power on (every 3 s until it answers) and whenever its data stops (five
+tries, then "tap to retry"). The C5
 answers on whichever port last sent it a command, so plugging the phone app in
 over USB takes it over until you tap the handheld's spectrum.
 
@@ -66,7 +69,8 @@ over USB takes it over until you tap the handheld's spectrum.
    hold BOOT while pressing RESET.
 3. Open [ESP Tool](https://espressif.github.io/esptool-js/) in Chrome or Edge,
    connect at 921600 baud, and flash the file at address **0x0**.
-   Or from a terminal: `esptool.py --chip esp32s3 write_flash 0x0 widscan58-handheld-N.bin`.
+   Or from a terminal: `esptool.py --chip esp32s3 write_flash --flash_mode dio 0x0 widscan58-handheld-N.bin`
+   (the board's flash needs DIO mode).
 
 The board prints a status line every 5 seconds on its USB serial port
 (frames per second, frames from the C5, CRC errors).
