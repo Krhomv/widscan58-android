@@ -53,6 +53,35 @@ static void busWindow(uint8_t c, int a, int b) {
     busCmd(c, d, 4);
 }
 
+// Bands are queued, not waited for: the next band is byte-swapped while the
+// previous one is on the bus. Each slot's three transactions (column window,
+// row window, pixels) stay valid until collected.
+static spi_transaction_t trans[SLOTS][3];
+static int inflight;
+
+static void collectOne() {
+    spi_transaction_t *r;
+    spi_device_get_trans_result(dev, &r, portMAX_DELAY);
+    inflight--;
+    if (r->user) xSemaphoreGive(freeSlots);  // a band's pixels: its buffer is free
+}
+
+static void collectAll() {
+    while (inflight) collectOne();
+}
+
+static void windowTrans(spi_transaction_t &t, uint8_t c, int a, int b) {
+    t = {};
+    t.flags = SPI_TRANS_USE_TXDATA;
+    t.cmd = 0x02;
+    t.addr = (uint32_t)c << 8;
+    t.tx_data[0] = (uint8_t)(a >> 8);
+    t.tx_data[1] = (uint8_t)a;
+    t.tx_data[2] = (uint8_t)(b >> 8);
+    t.tx_data[3] = (uint8_t)b;
+    t.length = 32;
+}
+
 static void busBand(uint16_t *buf, int y, int rows, bool swap) {
     if (swap) {
         // RGB565 big-endian; two pixels per 32-bit word.
@@ -62,15 +91,22 @@ static void busBand(uint16_t *buf, int y, int rows, bool swap) {
             p[i] = ((v & 0x00ff00ffu) << 8) | ((v >> 8) & 0x00ff00ffu);
         }
     }
-    busWindow(0x2a, 0, W - 1);
-    busWindow(0x2b, y + Y_GAP, y + rows - 1 + Y_GAP);
-    spi_transaction_t p = {};
-    p.flags = SPI_TRANS_MODE_QIO;
-    p.cmd = 0x32;
-    p.addr = 0x2c << 8;
-    p.tx_buffer = buf;
-    p.length = W * rows * 16;
-    spi_device_transmit(dev, &p);
+    int k = 0;
+    while (k < SLOTS - 1 && slots[k] != buf) k++;
+    spi_transaction_t *t = trans[k];
+    windowTrans(t[0], 0x2a, 0, W - 1);
+    windowTrans(t[1], 0x2b, y + Y_GAP, y + rows - 1 + Y_GAP);
+    t[2] = {};
+    t[2].flags = SPI_TRANS_MODE_QIO;
+    t[2].cmd = 0x32;
+    t[2].addr = 0x2c << 8;
+    t[2].tx_buffer = buf;
+    t[2].length = W * rows * 16;
+    t[2].user = buf;
+    for (int i = 0; i < 3; i++) {
+        spi_device_queue_trans(dev, &t[i], portMAX_DELAY);
+        inflight++;
+    }
 }
 
 static void cmd(uint8_t c, const uint8_t *data = nullptr, size_t n = 0) { busCmd(c, data, n); }
@@ -92,7 +128,7 @@ static bool busInit() {
     dc.mode = 0;
     dc.clock_speed_hz = 40 * 1000 * 1000;
     dc.spics_io_num = PIN_LCD_CS;
-    dc.queue_size = 4;
+    dc.queue_size = SLOTS * 3 + 1;
     dc.flags = SPI_DEVICE_HALFDUPLEX;
     if (spi_bus_add_device(SPI2_HOST, &dc, &dev) != ESP_OK) return false;
 
@@ -139,6 +175,11 @@ static bool busInit() {
 static void displayTask(void *) {
     Job j;
     for (;;) {
+        // Nothing to do but transfers in flight: collect them (frees buffers).
+        if (inflight && !uxQueueMessagesWaiting(jobs)) {
+            collectOne();
+            continue;
+        }
         xQueueReceive(jobs, &j, portMAX_DELAY);
         switch (j.type) {
             case JOB_INIT:
@@ -147,9 +188,9 @@ static void displayTask(void *) {
                 break;
             case JOB_BAND:
                 busBand(j.buf, j.y, j.rows, j.swap);
-                xSemaphoreGive(freeSlots);
                 break;
             case JOB_CMD:
+                collectAll();
                 busCmd(j.c, j.d, j.n);
                 if (j.delayMs) delay(j.delayMs);
                 xSemaphoreGive(jobDone);
