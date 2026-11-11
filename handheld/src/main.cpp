@@ -231,36 +231,62 @@ void loop() {
 
     // Battery, every 2 s. Off below 3.0 V for 20 s, to spare the cell.
     if (now - lastBattery >= 2000 || !lastBattery) {
+        // A gap (boot, or a power off on USB): let the cell settle again.
+        bool gap = !lastBattery || now - lastBattery > 5000;
         lastBattery = now;
         float v = batteryVolts();
         // The charger's status pin only drives its LED, so charging is read
-        // from the cell voltage: plugging USB in lifts it at once by the
-        // charge current through the cell's resistance (a step up), and
-        // unplugging drops it again. A drop near 4.2 V is the charge ending.
-        static float vAvg;
-        static bool charging, full;
+        // two ways: a USB host (a PC) is seen directly; a plain charger only
+        // by the cell voltage, which steps up when it's plugged in (the
+        // charge current through the cell's resistance) and down when it's
+        // unplugged. A drop near 4.2 V is the charge ending. A charger that
+        // was already in at boot can't be seen until it's unplugged.
+        static float vAvg, vBefore, rise = 0.2f;
+        static int settle, riseIn;
+        static bool charging, full, host;
+        if (gap) settle = 5;  // the first ~10 s: the cell recovers from the boot load
+        bool hostNow = Serial.isPlugged();
         if (v > 4.35f) {  // no cell: the charger's output
             ui->usbPower = true;
             charging = full = false;
+        } else if (settle > 0) {
+            ui->usbPower = false;
+            settle--;
+            vAvg = v;
+            charging = hostNow;
         } else {
             ui->usbPower = false;
-            if (vAvg == 0) vAvg = v;
             float step = v - vAvg;
-            if (step > 0.04f) {
+            if (hostNow) {
+                if (!charging) full = false;
+                charging = true;
+            } else if (host) {
+                charging = false;  // unplugged from the PC
+            } else if (!charging && step > 0.04f) {
                 charging = true;
                 full = false;
-            } else if (step < -0.04f && charging) {
+                vBefore = vAvg;  // measure the lift once it has settled
+                riseIn = 5;
+            } else if (charging && step < -0.04f) {
                 charging = false;
                 full = vAvg > 4.12f;  // still on USB, done
             }
-            if (full && v < 4.0f) full = false;  // unplugged and used since
             vAvg += 0.25f * (v - vAvg);
+            if (riseIn > 0 && --riseIn == 0 && charging) {
+                float r = vAvg - vBefore;
+                rise = r < 0.05f ? 0.05f : r > 0.35f ? 0.35f : r;
+            }
+            if (full && v < 4.0f) full = false;  // unplugged and used since
         }
+        host = hostNow;
         ui->charging = charging;
         ui->full = full;
-        // While charging the cell reads high (the charge current): about
-        // 0.1 V at this board's 0.5 A.
-        ui->batteryPct = full ? 100 : batteryPercent(charging ? v - 0.1f : v);
+        // While charging the cell reads high by the lift measured at plug-in
+        // (about 0.2 V on the first unit), shrinking as the charge current
+        // tapers off near 4.2 V.
+        float taper = (4.2f - v) / 0.3f;
+        taper = taper < 0 ? 0 : taper > 1 ? 1 : taper;
+        ui->batteryPct = full ? 100 : batteryPercent(charging ? v - rise * taper : v);
         if (!charging && v > 2.5f && v < 3.0f) {
             if (!lowSince) lowSince = now;
             else if (now - lowSince > 20000) {
