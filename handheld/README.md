@@ -19,25 +19,27 @@ the C5's serial port, the same protocol the web UI uses over USB.
 - **Charging screen:** plugging USB into a switched-off handheld starts it on a
   full-screen charging display with the scanner idle (its LED dark). Press the
   power key to scan; unplugging USB turns it off again.
-- **Spectrum:** the whole band, 5640–5950 MHz, stitched from the scanner's LO
+- **Spectrum:** the whole band, 5640–5950 MHz, across the full width (no scale
+  labels: the channel rows below share its frequency axis), stitched from the scanner's LO
   segments (each point from the nearest LO, as the web UI's panorama). Blue is
   live, amber the max hold, which fades back to the live trace over about a minute. Dark columns are parts of the band no LO reaches.
 - **Waterfall:** the last ~2 seconds, to tell a steady VTX from on-and-off Wi-Fi.
 - **Channel rows:** three platforms (by default Analog R, DJI V1 20 MHz and DJI O3 20 MHz; Oscar Liang's chart, as the Android app's
   Channels tab), each channel coloured by its mean power above the band's noise
   floor: green < 4 dB, yellow 4–9, orange 9–16, red ≥ 16, grey not scanned.
+  Each row's platform name sits just above its boxes.
 
 ## Controls
 
 | Do | To |
 |---|---|
-| Tap a row's name | Change that row to the next platform (kept across restarts) |
+| Tap a row's name (just above its boxes) | Change that row to the next platform (kept across restarts) |
 | Tap a channel | Mark it on the spectrum with its level; tap again to clear |
 | Tap the spectrum | Reset the max hold and the average |
 | Tap the status bar | Change the brightness (4 steps, kept) |
 | Power key, hold to turn on | Keep holding until the screen lights |
 | Power key, short press | Screen off / on (the scan keeps running) |
-| Power key, hold 2 s | Power off (also stops the scan and darkens the C5's LED, so on USB the C5 idles while the cell charges) |
+| Power key, hold 2 s | Power off (on USB: the charging screen, scanner idle) |
 
 The screen dims after 3 minutes without a touch (the first tap only wakes it),
 and the board powers off when the cell stays below 3.0 V for 20 seconds.

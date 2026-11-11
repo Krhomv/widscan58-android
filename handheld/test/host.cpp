@@ -149,7 +149,7 @@ int main(int argc, char **argv) {
     ui.batteryPct = 82;
     ui.batteryV = 3.95f;
     bool a, b, cc;
-    ui.tap(436, 347 + 27 * 0 + 13, 3990, &a, &b, &cc);  // select R6 on the first row
+    ui.tap(391, 346 + 13 + 10, 3990, &a, &b, &cc);  // select R6 on the first row
     ui.update(sc, 4000);
     ui.draw(R_STATUS | R_PLOT | R_ROWS, 4000);
 

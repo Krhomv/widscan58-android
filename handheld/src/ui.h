@@ -29,7 +29,7 @@ RegionRows regionRows(Region r);
 class Ui {
 public:
     static const int W = 600, H = 450;
-    static const int LX = 74, PW = 520;  // plot left and width
+    static const int LX = 6, PW = 588;  // plot left and width (the channel rows share the axis)
     Ui(Canvas &c, Settings &s) : c(c), set(s) { memset(wf, WF_EMPTY, sizeof(wf)); }
 
     /** Takes what it needs from the scanner (call with it locked). */

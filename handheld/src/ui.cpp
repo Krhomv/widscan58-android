@@ -13,8 +13,8 @@ static const int STATUS_H = 28;
 static const int SPEC_T = 34, SPEC_B = 222;  // spectrum plot rows
 static const int AXIS_Y = 236;              // MHz labels' baseline
 static const int WF_T = 242;                // waterfall top (Ui::WF_ROWS tall)
-static const int ROWS_T = 347, ROW_H = 27;  // channel rows
-static const int LEGEND_Y = 442;
+static const int ROWS_T = 346, ROW_H = 34;  // channel rows: a caption, then the boxes
+static const int CAP_H = 13, BOX_H = 20;
 
 RegionRows regionRows(Region r) {
     switch (r) {
@@ -241,19 +241,13 @@ void Ui::drawPlot(uint32_t nowMs) {
     for (int db = (int)bottomDb + 10; db < topDb; db += 10) {
         int y = dy((float)db);
         c.hline(LX, y, PW, GRID);
-        if (((db % 20) + 20) % 20 == 0) {
-            snprintf(s, sizeof(s), "%d", db);
-            c.text(font_small, LX - 6, y + 4, s, INK2, RIGHT);
-        }
     }
-    c.text(font_small, 8, dy(bottomDb + 35) + 4, "dBFS", MUTED);
     for (int f = 5650; f <= 5950; f += 50) {
         int x = (int)lroundf(fx((float)f));
         if (x < LX + PW) c.vline(x, SPEC_T, SPEC_B - SPEC_T + 1, GRID);
         snprintf(s, sizeof(s), "%d", f);
         if (x < LX + PW - 10) c.text(font_small, x, AXIS_Y, s, INK2, CENTER);
     }
-    c.text(font_small, 8, AXIS_Y, "MHz", MUTED);
 
     // Live trace: a fading fill under a line, then the max hold line.
     const uint16_t fillC = rgb(56, 152, 255);
@@ -300,8 +294,6 @@ void Ui::drawPlot(uint32_t nowMs) {
         uint16_t *p = c.px + (WF_T + j) * W + LX;
         for (int x = 0; x < PW; x++) p[x] = wfLut[row[x]];
     }
-    c.text(font_small, 8, WF_T + 12, "Waterfall", MUTED);
-    c.text(font_small, 8, WF_T + 26, "last 3 s", MUTED);
 
     // Messages over the spectrum.
     const char *msg = 0;
@@ -343,28 +335,18 @@ void Ui::drawRows() {
     for (int r = 0; r < Settings::ROWS; r++) {
         const Platform &p = PLATFORMS[set.rows[r]];
         int y = ROWS_T + r * ROW_H;
-        c.text(font_label, 8, y + ROW_H / 2 + 4, p.label, INK);
+        c.text(font_small, LX, y + CAP_H - 2, p.label, INK2);
+        int by = y + CAP_H;
         for (int j = 0; j < p.count; j++) {
             int x, w;
             boxGeometry(r, j, &x, &w);
             float db = lev[r][j].db;
             uint16_t col = levelColor(db);
-            c.roundRect(x, y + 3, w, ROW_H - 6, 4, col);
-            if (r == selRow && j == selCh) c.roundFrame(x - 2, y + 1, w + 4, ROW_H - 2, 5, INK);
+            c.roundRect(x, by, w, BOX_H, 4, col);
+            if (r == selRow && j == selCh) c.roundFrame(x - 2, by - 2, w + 4, BOX_H + 4, 5, INK);
             uint16_t tc = col == WARN || col == SERIOUS ? rgb(17, 17, 17) : col == GREY ? INK2 : rgb(255, 255, 255);
-            c.text(font_label, x + w / 2, y + ROW_H / 2 + 4, p.ch[j].name, tc, CENTER);
+            c.text(font_label, x + w / 2, by + BOX_H / 2 + 5, p.ch[j].name, tc, CENTER);
         }
-    }
-    // Legend.
-    static const struct {
-        uint16_t c;
-        const char *t;
-    } L[] = {{GOOD, "Clear <4 dB"}, {WARN, "Light 4\xe2\x80\x93" "9"}, {SERIOUS, "Busy 9\xe2\x80\x93" "16"},
-             {CRITICAL, "Occupied \xe2\x89\xa5" "16"}, {GREY, "Not scanned"}};
-    int x = 8;
-    for (const auto &l : L) {
-        c.roundRect(x, LEGEND_Y - 9, 10, 10, 2, l.c);
-        x += 15 + c.text(font_small, x + 15, LEGEND_Y, l.t, INK2) + 16;
     }
 }
 
@@ -387,8 +369,8 @@ int Ui::tap(int x, int y, uint32_t nowMs, bool *settingsChanged, bool *resetHold
     }
     int r = (y - ROWS_T) / ROW_H;
     if (y < ROWS_T || r >= Settings::ROWS) return 0;
-    if (x < LX) {
-        // Next platform not already on screen.
+    if (y - ROWS_T - r * ROW_H < CAP_H + 1) {
+        // The caption: the next platform not already on screen.
         int p = set.rows[r];
         for (int k = 0; k < PLATFORM_COUNT; k++) {
             p = (p + 1) % PLATFORM_COUNT;
