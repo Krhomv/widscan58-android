@@ -257,17 +257,19 @@ void loop() {
         } else {
             ui->usbPower = false;
             float step = v - vAvg;
-            if (hostNow) {
-                if (!charging) full = false;
-                charging = true;
-            } else if (host) {
+            if (hostNow && !host && !full) {
+                charging = true;  // plugged into a PC
+            } else if (host && !hostNow) {
                 charging = false;  // unplugged from the PC
-            } else if (!charging && step > 0.04f) {
+                full = full && v > 4.1f;
+            } else if (!charging && !full && step > 0.04f) {
                 charging = true;
-                full = false;
-            } else if (charging && step < -0.04f) {
+            } else if (charging && step < -0.03f) {
+                // The charge ended (the reading only sheds the small
+                // end-of-charge lift and stays near 4.2 V) or the charger
+                // was unplugged (it falls to the cell's own voltage).
                 charging = false;
-                full = vAvg > 4.12f;  // still on USB, done
+                full = v > 4.1f;
             }
             vAvg += 0.25f * (v - vAvg);
             if (full && v < 4.0f) full = false;  // unplugged and used since
