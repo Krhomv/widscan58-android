@@ -125,6 +125,18 @@ int Ui::draw(int mask, uint32_t nowMs) {
     return mask;
 }
 
+// A lightning bolt, BOLT_W x BOLT_H at scale 1.
+static const char *const BOLT[] = {
+    "    ####", "   #### ", "   ###  ", "  ###   ", "  ###   ", " #######", "####### ",
+    "   ###  ", "   ##   ", "  ##    ", "  #     ", " #      ", " #      ",
+};
+static const int BOLT_W = 8, BOLT_H = (int)(sizeof(BOLT) / sizeof(BOLT[0]));
+static void drawBolt(Canvas &c, int x0, int y0, int scale, uint16_t color) {
+    for (int r = 0; r < BOLT_H; r++)
+        for (int k = 0; k < BOLT_W; k++)
+            if (BOLT[r][k] == '#') c.fill(x0 + k * scale, y0 + r * scale, scale, scale, color);
+}
+
 void Ui::drawStatus(uint32_t nowMs) {
     c.fill(0, 0, W, STATUS_H, BG);
     int x = 8 + c.text(font_title, 8, 19, "Widscan58", INK);
@@ -164,31 +176,11 @@ void Ui::drawStatus(uint32_t nowMs) {
         else snprintf(s, sizeof(s), "%.2f V  %d%%", batteryV, batteryPct);
         if (charging || full) {
             // A lightning bolt left of the cell.
-            static const char *const BOLT[] = {
-                "    ####", "   #### ", "   ###  ", "  ###   ", "  ###   ", " #######", "####### ",
-                "   ###  ", "   ##   ", "  ##    ", "  #     ", " #      ", " #      ",
-            };
-            const int bw = 8, bh = (int)(sizeof(BOLT) / sizeof(BOLT[0]));
-            int x0 = bx - 4 - bw, y0 = 14 - bh / 2;
-            for (int r = 0; r < bh; r++)
-                for (int k = 0; k < bw; k++)
-                    if (BOLT[r][k] == '#') c.pixel(x0 + k, y0 + r, AMBER);
+            int x0 = bx - 4 - BOLT_W;
+            drawBolt(c, x0, 14 - BOLT_H / 2, 1, AMBER);
             bx = x0;
         }
         c.text(font_small, bx - 6, 19, s, INK2, RIGHT);
-        bx -= 6 + Canvas::textWidth(font_small, s);
-    }
-
-    // Clearest channel of the first row's platform.
-    const Platform &p = PLATFORMS[set.rows[0]];
-    int best = -1;
-    for (int j = 0; j < p.count; j++)
-        if (!isnan(lev[0][j].db) && (best < 0 || lev[0][j].db < lev[0][best].db)) best = j;
-    if (best >= 0 && link == LINK_OK) {
-        snprintf(s, sizeof(s), "%s %u", p.ch[best].name, p.ch[best].mhz);
-        int w = c.text(font_label, bx - 16, 19, s, INK, RIGHT);
-        snprintf(s, sizeof(s), "Clearest %s:", p.label);
-        c.text(font_small, bx - 22 - w, 19, s, INK2, RIGHT);
     }
 }
 
@@ -426,4 +418,54 @@ int Ui::tap(int x, int y, uint32_t nowMs, bool *settingsChanged, bool *resetHold
     if (selRow == r && selCh == best) selRow = selCh = -1;
     else selRow = r, selCh = best;
     return R_ROWS | R_PLOT;
+}
+
+/** A lightning bolt bw x bh at x0, y0, anti-aliased (4x4 samples a pixel). */
+static void drawBigBolt(Canvas &c, int x0, int y0, int bw, int bh, uint16_t color) {
+    static const float P[][2] = {{0.62f, 0}, {0.08f, 0.58f}, {0.44f, 0.58f}, {0.30f, 1}, {0.92f, 0.38f}, {0.55f, 0.38f}, {0.78f, 0}};
+    const int n = sizeof(P) / sizeof(P[0]);
+    for (int y = 0; y < bh; y++)
+        for (int x = 0; x < bw; x++) {
+            int hits = 0;
+            for (int sy = 0; sy < 4; sy++)
+                for (int sx = 0; sx < 4; sx++) {
+                    float px = (x + (sx + 0.5f) / 4) / bw, py = (y + (sy + 0.5f) / 4) / bh;
+                    bool in = false;
+                    for (int i = 0, j = n - 1; i < n; j = i++)
+                        if ((P[i][1] > py) != (P[j][1] > py) &&
+                            px < (P[j][0] - P[i][0]) * (py - P[i][1]) / (P[j][1] - P[i][1]) + P[i][0])
+                            in = !in;
+                    hits += in;
+                }
+            if (hits) c.blendPixel(x0 + x, y0 + y, color, (uint8_t)(hits * 255 / 16));
+        }
+}
+
+void Ui::drawCharging(uint32_t nowMs, int dx, int dy) {
+    c.fill(0, 0, W, H, BG);
+    // A big cell, centred (shifted by dx, dy against OLED wear).
+    const int bw = 240, bh = 110, t = 6;
+    int x = (W - bw) / 2 + dx, y = 120 + dy;
+    uint16_t frame = INK;
+    c.fill(x, y, bw, t, frame);
+    c.fill(x, y + bh - t, bw, t, frame);
+    c.fill(x, y, t, bh, frame);
+    c.fill(x + bw - t, y, t, bh, frame);
+    c.fill(x + bw, y + bh / 2 - 22, 12, 44, frame);
+    int inner = bw - 2 * t - 8;
+    int pct = full ? 100 : batteryPct < 0 ? 0 : batteryPct;
+    if (charging && !full) {
+        int step = (int)(nowMs / 400 % 5);
+        pct += (100 - pct) * step / 4;
+    }
+    if (!usbPower) c.fill(x + t + 4, y + t + 4, inner * pct / 100, bh - 2 * t - 8, GOOD);
+    if (charging || full || usbPower) drawBigBolt(c, x + bw / 2 - 30, y + 14, 60, bh - 28, usbPower ? AMBER : INK);
+    char s[48];
+    const char *title = usbPower ? "USB power, no cell" : full ? "Charged" : charging ? "Charging" : "On battery";
+    c.text(font_big, W / 2 + dx, y + bh + 70, title, INK, CENTER);
+    if (!usbPower) {
+        snprintf(s, sizeof(s), "%.2f V", batteryV);
+        c.text(font_label, W / 2 + dx, y + bh + 110, s, INK2, CENTER);
+    }
+    c.text(font_small, W / 2 + dx, y + bh + 160, "Press power to scan", INK2, CENTER);
 }

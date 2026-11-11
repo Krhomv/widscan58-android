@@ -88,6 +88,71 @@ static int batteryPercent(float v) {
     return 100;
 }
 
+
+// Battery state, kept across the scanning loop and the charging screen.
+static float vAvg;
+static int settle, lastPct = -1;
+static bool charging, full, host;
+
+static uint32_t batteryAt;
+
+/** A battery reading (every 2 s) into ui's battery fields. onCharger: USB
+ *  power is known to be there (the charging screen). */
+static void updateBattery(uint32_t now, bool onCharger) {
+    bool gap = !batteryAt || now - batteryAt > 5000;  // boot, or a pause
+    batteryAt = now;
+    float v = batteryVolts();
+    // The charger's status pin only drives its LED, so charging is read
+    // two ways: a USB host (a PC) is seen directly; a plain charger only
+    // by the cell voltage, which steps up when it's plugged in (the
+    // charge current through the cell's resistance) and down when it's
+    // unplugged. A drop near 4.2 V is the charge ending. A charger that
+    // was already in at boot can't be seen until it's unplugged.
+    if (gap) settle = 5;  // the first ~10 s: the cell recovers from the boot load
+    bool hostNow = Serial.isPlugged();
+    if (v > 4.35f) {  // no cell: the charger's output
+        ui->usbPower = true;
+        charging = full = false;
+    } else if (settle > 0) {
+        ui->usbPower = false;
+        settle--;
+        vAvg = v;
+        charging = hostNow || onCharger;
+    } else {
+        ui->usbPower = false;
+        float step = v - vAvg;
+        if (hostNow && !host && !full) {
+            charging = true;  // plugged into a PC
+        } else if (host && !hostNow) {
+            charging = false;  // unplugged from the PC
+            full = full && v > 4.1f;
+        } else if (!charging && !full && step > 0.04f) {
+            charging = true;
+        } else if (charging && step < -0.03f) {
+            // The charge ended (the reading only sheds the small
+            // end-of-charge lift and stays near 4.2 V) or the charger
+            // was unplugged (it falls to the cell's own voltage).
+            charging = false;
+            full = v > 4.1f;
+        }
+        vAvg += 0.25f * (v - vAvg);
+        if (onCharger && !full) charging = true;  // known: the charging screen runs only on USB
+        if (full && v < 4.0f) full = false;  // unplugged and used since
+    }
+    host = hostNow;
+    ui->charging = charging;
+    ui->full = full;
+    ui->batteryV = v;
+    // While charging, the voltage here is the charger's output: the cell
+    // plus the charge current through the cell, connector and wires
+    // (about 0.2 V or more), and in the charger's constant-voltage phase
+    // it sits at 4.2 V long before the cell is full. So it says nothing
+    // reliable about the charge: the gauge keeps the last level read on
+    // battery and the text drops the percentage.
+    if (!charging && !full) lastPct = batteryPercent(v);
+    ui->batteryPct = full ? 100 : !charging ? batteryPercent(v) : lastPct >= 0 ? lastPct : 0;
+}
+
 static void flushRegions(int mask) {
     for (Region r : {R_STATUS, R_PLOT, R_ROWS})
         if (mask & r) {
@@ -102,34 +167,82 @@ static void message(const char *text) {
     displayFlush(fb, 0, Ui::H);
 }
 
-/** Power off from the battery. On USB power the board stays up: sleep the
- *  panel until the power key is pressed again. */
-static void powerOff(const char *why) {
-    message(why);
-    delay(800);
-    displayBrightness(0);
-    // On USB the board stays powered after boardPowerOff, so idle the C5
-    // too and turn its LED off (not saved: it comes back if the C5 reboots),
-    // repeating while off in case a command is lost.
+static bool woke;  // back from the charging screen: the loop redraws everything
+
+/** The charging screen: the scanner idle (its LED dark) and a big battery,
+ *  until the power key is pressed. Only on USB power: the battery latch is
+ *  released, so unplugging turns the board off. */
+static void chargeMode() {
     idleScanner();
     boardPowerOff();
-    delay(300);
-    displaySleep(true);
-    while (powerKeyDown()) delay(20);
-    for (int t = 0; !powerKeyDown(); t++) {
-        if (t % 100 == 99) idleScanner();
-        delay(20);
-    }
     displaySleep(false);
     displayBrightness(BRIGHTNESS[settings.brightness]);
+    while (powerKeyDown()) delay(20);
+    uint32_t start = millis(), lastIdle = start, lastFrame = 0, lastBat = 0, lastLog = start, lastTouch = start;
+    bool dim = false;
+    for (;;) {
+        uint32_t now = millis();
+        if (powerKeyDown()) break;
+        if (now - lastIdle >= 2000) {  // again and again, in case one is lost
+            idleScanner();
+            lastIdle = now;
+        }
+        if (!lastBat || now - lastBat >= 2000) {
+            updateBattery(now, true);
+            lastBat = now;
+        }
+        int tx, ty;
+        if (touchRead(&tx, &ty)) {
+            lastTouch = now;
+            if (dim) {
+                dim = false;
+                displayBrightness(BRIGHTNESS[settings.brightness]);
+            }
+        }
+        if (!dim && now - lastTouch > 60000) {  // dim after a minute; a touch brings it back
+            dim = true;
+            displayBrightness(BRIGHTNESS[BRIGHTNESS_LEVELS - 1]);
+        }
+        if (now - lastFrame >= 200) {
+            lastFrame = now;
+            // Drift a few pixels each minute: hours of the same picture wear an OLED.
+            int m = (int)(now / 60000);
+            ui->drawCharging(now, (m % 7) * 6 - 18, (m / 7 % 5) * 6 - 12);
+            displayFlush(fb, 0, Ui::H);
+        }
+        if (now - lastLog >= 5000) {
+            lastLog = now;
+            char line[96];
+            int n = snprintf(line, sizeof(line), "charging screen, battery %.3f V %s%s\n", ui->batteryV,
+                             ui->usbPower ? "usb" : ui->full ? "charged" : ui->charging ? "charging" : "battery",
+                             Serial.isPlugged() ? " +host" : "");
+            if (Serial && Serial.availableForWrite() >= n) Serial.write((const uint8_t *)line, n);
+        }
+        delay(10);
+    }
     while (powerKeyDown()) delay(20);
     boardPowerHold();
     Link.printf("GPIO %d LED\n", C5_LED_GPIO);
     claimScanner();
+    woke = true;
+}
+
+/** Power off. On battery the board goes dark at boardPowerOff; on USB it
+ *  stays up and shows the charging screen until the power key is pressed. */
+static void powerOff(const char *why) {
+    message(why);
+    delay(800);
+    idleScanner();
+    boardPowerOff();
+    delay(300);
+    chargeMode();  // still running: on USB
 }
 
 void setup() {
     boardPowerHold();  // first: on battery the board is only powered while the key is held
+    // On battery the board starts while the power key is held; plugging USB
+    // into a switched-off board starts it with the key up: the charging screen.
+    bool usbStart = !powerKeyDown();
     esp_log_level_set("*", ESP_LOG_NONE);
     Serial.setTxBufferSize(1024);
     Serial.begin(115200);  // USB CDC: status lines for debugging
@@ -157,6 +270,7 @@ void setup() {
 
     xTaskCreatePinnedToCore(linkTask, "link", 4096, nullptr, 5, nullptr, 0);
     analogReadResolution(12);
+    if (usbStart) chargeMode();
 }
 
 void loop() {
@@ -166,6 +280,14 @@ void loop() {
     static int touchX, touchY, forced = R_STATUS | R_PLOT | R_ROWS;
     static unsigned frames;
     uint32_t now = millis();
+    if (woke) {  // back from the charging screen
+        woke = false;
+        forced = R_STATUS | R_PLOT | R_ROWS;
+        lastActivity = now;
+        dimmed = screenOff = false;
+        keyArmed = false;
+        displayBrightness(BRIGHTNESS[settings.brightness]);
+    }
 
     // Power key: a long press turns off; a short one turns the screen off and on.
     bool key = powerKeyDown();
@@ -231,63 +353,10 @@ void loop() {
 
     // Battery, every 2 s. Off below 3.0 V for 20 s, to spare the cell.
     if (now - lastBattery >= 2000 || !lastBattery) {
-        // A gap (boot, or a power off on USB): let the cell settle again.
-        bool gap = !lastBattery || now - lastBattery > 5000;
         lastBattery = now;
-        float v = batteryVolts();
-        // The charger's status pin only drives its LED, so charging is read
-        // two ways: a USB host (a PC) is seen directly; a plain charger only
-        // by the cell voltage, which steps up when it's plugged in (the
-        // charge current through the cell's resistance) and down when it's
-        // unplugged. A drop near 4.2 V is the charge ending. A charger that
-        // was already in at boot can't be seen until it's unplugged.
-        static float vAvg;
-        static int settle;
-        static bool charging, full, host;
-        if (gap) settle = 5;  // the first ~10 s: the cell recovers from the boot load
-        bool hostNow = Serial.isPlugged();
-        if (v > 4.35f) {  // no cell: the charger's output
-            ui->usbPower = true;
-            charging = full = false;
-        } else if (settle > 0) {
-            ui->usbPower = false;
-            settle--;
-            vAvg = v;
-            charging = hostNow;
-        } else {
-            ui->usbPower = false;
-            float step = v - vAvg;
-            if (hostNow && !host && !full) {
-                charging = true;  // plugged into a PC
-            } else if (host && !hostNow) {
-                charging = false;  // unplugged from the PC
-                full = full && v > 4.1f;
-            } else if (!charging && !full && step > 0.04f) {
-                charging = true;
-            } else if (charging && step < -0.03f) {
-                // The charge ended (the reading only sheds the small
-                // end-of-charge lift and stays near 4.2 V) or the charger
-                // was unplugged (it falls to the cell's own voltage).
-                charging = false;
-                full = v > 4.1f;
-            }
-            vAvg += 0.25f * (v - vAvg);
-            if (full && v < 4.0f) full = false;  // unplugged and used since
-        }
-        host = hostNow;
-        ui->charging = charging;
-        ui->full = full;
-        ui->batteryV = v;
-        // While charging, the voltage here is the charger's output: the cell
-        // plus the charge current through the cell, connector and wires
-        // (about 0.2 V or more), and in the charger's constant-voltage phase
-        // it sits at 4.2 V long before the cell is full. So it says nothing
-        // reliable about the charge: the gauge keeps the last level read on
-        // battery and the text drops the percentage.
-        static int lastPct = -1;
-        if (!charging && !full) lastPct = batteryPercent(v);
-        ui->batteryPct = full ? 100 : !charging ? batteryPercent(v) : lastPct >= 0 ? lastPct : batteryPercent(v - 0.3f);
-        if (!charging && v > 2.5f && v < 3.0f) {
+        updateBattery(now, false);
+        float v = ui->batteryV;
+        if (!ui->charging && v > 2.5f && v < 3.0f) {
             if (!lowSince) lowSince = now;
             else if (now - lowSince > 20000) {
                 powerOff("Battery empty");

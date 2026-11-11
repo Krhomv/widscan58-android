@@ -45,6 +45,10 @@ public:
      *  settings must be saved, *resetHolds / *retry for the caller to act on. */
     int tap(int x, int y, uint32_t nowMs, bool *settingsChanged, bool *resetHolds, bool *retry);
 
+    /** The whole screen as the charging screen (scanner idle), moved by
+     *  dx, dy. Uses the battery fields below. */
+    void drawCharging(uint32_t nowMs, int dx, int dy);
+
     // Fed by the caller.
     LinkState link = LINK_WAITING;
     int batteryPct = -1;  // -1: unknown

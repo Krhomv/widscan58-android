@@ -12,8 +12,13 @@ the C5's serial port, the same protocol the web UI uses over USB.
 
 ## The screen
 
-- **Status bar:** sweeps per second, the clearest channel of the first row's
-  platform, and the battery.
+- **Status bar:** sweeps per second, and the battery: voltage and percentage
+  on battery; while charging, the gauge fills over and over beside a lightning
+  bolt (the voltage the board reads while charging is the charger's, so it
+  can't give a percentage).
+- **Charging screen:** plugging USB into a switched-off handheld starts it on a
+  full-screen charging display with the scanner idle (its LED dark). Press the
+  power key to scan; unplugging USB turns it off again.
 - **Spectrum:** the whole band, 5640–5950 MHz, stitched from the scanner's LO
   segments (each point from the nearest LO, as the web UI's panorama). Blue is
   live, amber the max hold, which fades back to the live trace over about a minute. Dark columns are parts of the band no LO reaches.

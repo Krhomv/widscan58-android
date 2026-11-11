@@ -169,13 +169,24 @@ int main(int argc, char **argv) {
         printf("bands ok\n");
     }
 
-    FILE *out = fopen(argc > 1 ? argv[1] : "out.ppm", "wb");
-    fprintf(out, "P6 %d %d 255\n", Ui::W, Ui::H);
-    for (int i = 0; i < Ui::W * Ui::H; i++) {
-        uint16_t v = fb[i];
-        uint8_t px[3] = {(uint8_t)((v >> 11) * 255 / 31), (uint8_t)(((v >> 5) & 63) * 255 / 63), (uint8_t)((v & 31) * 255 / 31)};
-        fwrite(px, 1, 3, out);
-    }
-    fclose(out);
+    auto save = [&](const char *path) {
+        FILE *out = fopen(path, "wb");
+        fprintf(out, "P6 %d %d 255\n", Ui::W, Ui::H);
+        for (int i = 0; i < Ui::W * Ui::H; i++) {
+            uint16_t v = fb[i];
+            uint8_t px[3] = {(uint8_t)((v >> 11) * 255 / 31), (uint8_t)(((v >> 5) & 63) * 255 / 63), (uint8_t)((v & 31) * 255 / 31)};
+            fwrite(px, 1, 3, out);
+        }
+        fclose(out);
+    };
+    save(argc > 1 ? argv[1] : "out.ppm");
     printf("rendered\n");
+    if (argc > 2) {  // the charging screen
+        ui.charging = true;
+        ui.batteryPct = 40;
+        ui.batteryV = 4.23f;
+        ui.drawCharging(1200, 0, 0);
+        save(argv[2]);
+        printf("rendered charging screen\n");
+    }
 }
