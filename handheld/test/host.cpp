@@ -104,6 +104,23 @@ int main(int argc, char **argv) {
         printf("parser ok: %u frames, %u crc errors, %u bytes skipped\n", p.frames, p.crcErrors, p.skipped);
     }
 
+    // Max hold decays back to live: ~95% of the way in a minute, whatever the frame rate.
+    {
+        Scanner sc;
+        auto hot = spectrum(5676000, true), quiet = hot;
+        for (size_t k = 20; k < quiet.size(); k++) quiet[k] = 60;  // -97.5 dBFS everywhere
+        sc.onFrame(FRAME_SPECTRUM, hot.data(), hot.size(), 1000);
+        int j = 0;
+        for (int k = 0; k < sc.seg[0].n; k++)
+            if (hot[20 + k] > hot[20 + j]) j = k;
+        assert(hot[20 + j] - 60 > 40);
+        float start = sc.seg[0].maxHold[j] - quiet[20 + j];
+        for (uint32_t t = 1030; t <= 1000 + 60000; t += 30) sc.onFrame(FRAME_SPECTRUM, quiet.data(), quiet.size(), t);
+        float left = sc.seg[0].maxHold[j] - quiet[20 + j];
+        assert(left < 0.1f * start && left > 0.02f * start);
+        printf("hold decay ok: %.1f dB -> %.1f dB after 60 s\n", start / 2, left / 2);
+    }
+
     static uint16_t fb[Ui::W * Ui::H];
     Canvas canvas(fb, Ui::W, Ui::H);
     Settings set;

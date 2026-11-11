@@ -16,7 +16,7 @@ the C5's serial port, the same protocol the web UI uses over USB.
   platform, and the battery.
 - **Spectrum:** the whole band, 5640–5950 MHz, stitched from the scanner's LO
   segments (each point from the nearest LO, as the web UI's panorama). Blue is
-  live, amber the max hold. Dark columns are parts of the band no LO reaches.
+  live, amber the max hold, which fades back to the live trace over about a minute. Dark columns are parts of the band no LO reaches.
 - **Waterfall:** the last ~2 seconds, to tell a steady VTX from on-and-off Wi-Fi.
 - **Channel rows:** three platforms (by default Analog R, DJI V1 20 MHz and DJI O3 20 MHz; Oscar Liang's chart, as the Android app's
   Channels tab), each channel coloured by its mean power above the band's noise

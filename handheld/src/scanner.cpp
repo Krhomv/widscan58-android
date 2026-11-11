@@ -30,6 +30,11 @@ void Scanner::onFrame(uint8_t type, const uint8_t *p, uint16_t len, uint32_t now
         for (auto &x : seg)
             if (x.used && x.loKhz == lo) s = &x;
         bool fresh = !s || s->n != n || s->binHz != bin || s->startOffHz != start;
+        // Time since this segment's last update, for the max hold decay.
+        float dt = s && !fresh ? (int32_t)(nowMs - s->updatedMs) / 1000.0f : 0;
+        if (dt < 0) dt = 0;
+        float k = dt / HOLD_TAU_S;
+        if (k > 1) k = 1;
         if (!s) {
             // A free slot, else the stalest.
             s = &seg[0];
@@ -55,7 +60,9 @@ void Scanner::onFrame(uint8_t type, const uint8_t *p, uint16_t len, uint32_t now
                 s->maxHold[j] = codes[j];
                 s->avg[j] = lin;
             } else {
-                if (codes[j] > s->maxHold[j]) s->maxHold[j] = codes[j];
+                float h = s->maxHold[j];
+                h -= k * (h - codes[j]);
+                s->maxHold[j] = codes[j] > h ? codes[j] : h;
                 s->avg[j] += 0.05f * (lin - s->avg[j]);
             }
         }
@@ -78,8 +85,10 @@ void Scanner::onLine(const char *line, uint32_t nowMs) {
 void Scanner::resetHolds() {
     for (auto &s : seg)
         if (s.used) {
-            memcpy(s.maxHold, s.live, s.n);
-            for (int j = 0; j < s.n; j++) s.avg[j] = linTable()[s.live[j]];
+            for (int j = 0; j < s.n; j++) {
+                s.maxHold[j] = s.live[j];
+                s.avg[j] = linTable()[s.live[j]];
+            }
         }
 }
 
@@ -111,7 +120,8 @@ void Scanner::composite(float f0, float f1, int cols, float *live, float *maxHol
             }
         }
         if (!best) continue;
-        uint8_t l = 0, m = 0;
+        uint8_t l = 0;
+        float m = 0;
         float sum = 0;
         for (int k = ka; k <= kb; k++) {
             if (best->live[k] > l) l = best->live[k];
@@ -119,7 +129,7 @@ void Scanner::composite(float f0, float f1, int cols, float *live, float *maxHol
             sum += best->avg[k];
         }
         live[x] = codeDb(l);
-        maxHold[x] = codeDb(m);
+        maxHold[x] = m * 0.5f - 127.5f;
         avgLin[x] = sum / (kb - ka + 1);
     }
 }

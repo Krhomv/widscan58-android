@@ -14,7 +14,7 @@ struct Segment {
     uint32_t updatedMs;
     static const int MAX_BINS = 512;
     uint8_t live[MAX_BINS];  // spectrum codes: dBFS per bin = code / 2 - 127.5
-    uint8_t maxHold[MAX_BINS];
+    float maxHold[MAX_BINS]; // in code units, decaying back towards live
     float avg[MAX_BINS];     // exponential average, linear power
 };
 
@@ -22,6 +22,7 @@ class Scanner {
 public:
     static const int MAX_SEGMENTS = 8;
     static const uint32_t STALE_MS = 3000;  // a segment not updated for this long is dropped (replanned)
+    static constexpr float HOLD_TAU_S = 20.0f;  // max hold falls back to live with this time constant (~95% in a minute)
 
     Segment seg[MAX_SEGMENTS];
     uint32_t lastFrameMs = 0;  // 0: never
