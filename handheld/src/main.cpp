@@ -245,9 +245,9 @@ void setup() {
     // The key's pull-up was only just enabled: give the line time to rise
     // (a key held down stays low regardless), then take several readings.
     delay(30);
-    bool usbStart = true;
-    for (int k = 0; k < 5; k++, delay(2))
-        if (powerKeyDown()) usbStart = false;
+    int held = 0;
+    for (int k = 0; k < 5; k++, delay(2)) held += powerKeyDown();
+    bool usbStart = held < 5;  // a held key reads down every time
     esp_log_level_set("*", ESP_LOG_NONE);
     Serial.setTxBufferSize(1024);
     Serial.begin(115200);  // USB CDC: status lines for debugging
