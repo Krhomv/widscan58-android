@@ -242,7 +242,12 @@ void setup() {
     boardPowerHold();  // first: on battery the board is only powered while the key is held
     // On battery the board starts while the power key is held; plugging USB
     // into a switched-off board starts it with the key up: the charging screen.
-    bool usbStart = !powerKeyDown();
+    // The key's pull-up was only just enabled: give the line time to rise
+    // (a key held down stays low regardless), then take several readings.
+    delay(30);
+    bool usbStart = true;
+    for (int k = 0; k < 5; k++, delay(2))
+        if (powerKeyDown()) usbStart = false;
     esp_log_level_set("*", ESP_LOG_NONE);
     Serial.setTxBufferSize(1024);
     Serial.begin(115200);  // USB CDC: status lines for debugging
