@@ -33,6 +33,7 @@
 #define PIN_LINK_TX 43
 #define PIN_LINK_RX 44
 #define LINK_BAUD 921600
+#define C5_LED_GPIO 27  // the scanner's status LED (GPIO 27 LED saved on the C5); dark while powered off
 
 void boardPowerHold();
 void boardPowerOff();

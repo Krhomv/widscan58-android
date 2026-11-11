@@ -49,6 +49,10 @@ static void linkTask(void *) {
  *  makes this UART the port it answers on. One write: a lone byte after a
  *  pause could look like a RotorHazard probe. */
 static void claimScanner() { Link.print("PROTOCOL MONITOR\nSCAN START\nINFO\n"); }
+static void idleScanner() {
+    Link.printf("PROTOCOL MONITOR\nSCAN STOP\nGPIO %d HIGH\n", C5_LED_GPIO);  // the LED is active low
+    Link.flush();
+}
 
 // ---- Settings ----
 
@@ -105,18 +109,22 @@ static void powerOff(const char *why) {
     delay(800);
     displayBrightness(0);
     // On USB the board stays powered after boardPowerOff, so idle the C5
-    // too (its LED goes back to blinking) and restart it when turned on.
-    Link.print("SCAN STOP\n");
-    Link.flush();
+    // too and turn its LED off (not saved: it comes back if the C5 reboots),
+    // repeating while off in case a command is lost.
+    idleScanner();
     boardPowerOff();
     delay(300);
     displaySleep(true);
     while (powerKeyDown()) delay(20);
-    while (!powerKeyDown()) delay(20);
+    for (int t = 0; !powerKeyDown(); t++) {
+        if (t % 100 == 99) idleScanner();
+        delay(20);
+    }
     displaySleep(false);
     displayBrightness(BRIGHTNESS[settings.brightness]);
     while (powerKeyDown()) delay(20);
     boardPowerHold();
+    Link.printf("GPIO %d LED\n", C5_LED_GPIO);
     claimScanner();
 }
 
