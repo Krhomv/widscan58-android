@@ -149,12 +149,32 @@ void Ui::drawStatus(uint32_t nowMs) {
         c.fill(bx, 7, 1, 14, bc);
         c.fill(bx + 27, 7, 1, 14, bc);
         c.fill(bx + 28, 11, 2, 6, bc);
-        int fw = (24 * batteryPct + 50) / 100;
-        c.fill(bx + 2, 9, fw, 10, charging ? AMBER : batteryPct <= 15 ? CRITICAL : GOOD);
+        int pct = batteryPct;
+        if (charging) {
+            // Fill rising from the last level read on battery to full, over
+            // and over, as phones do: the voltage can't tell the charge.
+            int step = (int)(nowMs / 400 % 5);
+            pct += (100 - pct) * step / 4;
+        }
+        int fw = (24 * pct + 50) / 100;
+        c.fill(bx + 2, 9, fw, 10, !charging && batteryPct <= 15 ? CRITICAL : GOOD);
         if (usbPower) snprintf(s, sizeof(s), "USB");
         else if (full) snprintf(s, sizeof(s), "%.2f V  Charged", batteryV);
-        else if (charging) snprintf(s, sizeof(s), "%.2f V  Charging", batteryV);
+        else if (charging) snprintf(s, sizeof(s), "%.2f V", batteryV);
         else snprintf(s, sizeof(s), "%.2f V  %d%%", batteryV, batteryPct);
+        if (charging || full) {
+            // A lightning bolt left of the cell.
+            static const char *const BOLT[] = {
+                "    ####", "   #### ", "   ###  ", "  ###   ", "  ###   ", " #######", "####### ",
+                "   ###  ", "   ##   ", "  ##    ", "  #     ", " #      ", " #      ",
+            };
+            const int bw = 8, bh = (int)(sizeof(BOLT) / sizeof(BOLT[0]));
+            int x0 = bx - 4 - bw, y0 = 14 - bh / 2;
+            for (int r = 0; r < bh; r++)
+                for (int k = 0; k < bw; k++)
+                    if (BOLT[r][k] == '#') c.pixel(x0 + k, y0 + r, AMBER);
+            bx = x0;
+        }
         c.text(font_small, bx - 6, 19, s, INK2, RIGHT);
         bx -= 6 + Canvas::textWidth(font_small, s);
     }

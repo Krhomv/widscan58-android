@@ -335,7 +335,7 @@ void loop() {
     }
 
     int mask = R_PLOT | forced;
-    if (now - lastStatus >= 500) mask |= R_STATUS;
+    if (now - lastStatus >= (ui->charging ? 200u : 500u)) mask |= R_STATUS;  // faster for the charging animation
     if (now - lastRows >= 250) mask |= R_ROWS;
     if (mask & R_STATUS) lastStatus = now;
     if (mask & R_ROWS) lastRows = now;
