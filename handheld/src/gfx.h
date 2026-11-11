@@ -1,0 +1,63 @@
+// A small RGB565 canvas: rectangles, lines and anti-aliased text, drawn into
+// a frame buffer that display.cpp sends to the panel. Plain C++ so the host
+// test can render the same frames. GPL-3.0-or-later.
+#pragma once
+#include <stdint.h>
+#include "fonts.h"
+
+static inline constexpr uint16_t rgb(uint8_t r, uint8_t g, uint8_t b) {
+    return (uint16_t)(((r & 0xf8) << 8) | ((g & 0xfc) << 3) | (b >> 3));
+}
+
+/** a over b, a's weight alpha / 255. */
+static inline uint16_t mix(uint16_t a, uint16_t b, uint8_t alpha) {
+    if (alpha == 255) return a;
+    if (alpha == 0) return b;
+    uint32_t ar = a >> 11, ag = (a >> 5) & 63, ab = a & 31;
+    uint32_t br = b >> 11, bg = (b >> 5) & 63, bb = b & 31;
+    uint32_t r = (ar * alpha + br * (255 - alpha) + 127) / 255;
+    uint32_t g = (ag * alpha + bg * (255 - alpha) + 127) / 255;
+    uint32_t bl = (ab * alpha + bb * (255 - alpha) + 127) / 255;
+    return (uint16_t)(r << 11 | g << 5 | bl);
+}
+
+enum Align { LEFT, CENTER, RIGHT };
+
+class Canvas {
+public:
+    Canvas(uint16_t *px, int w, int h) : px(px), w(w), h(h), cy0(0), cy1(h) {}
+    uint16_t *px;  // row y at px + y * w (only rows cy0..cy1-1 need to exist)
+    const int w, h;
+    int cy0, cy1;  // rows drawn: a band of the frame can be drawn in a small buffer
+
+    /** Draw only rows [y0, y1), into `band` (that many rows, w wide). */
+    void setBand(uint16_t *band, int y0, int y1) {
+        px = band - y0 * w;
+        cy0 = y0;
+        cy1 = y1;
+    }
+    void setFull(uint16_t *fb) {
+        px = fb;
+        cy0 = 0;
+        cy1 = h;
+    }
+
+    void fill(int x, int y, int fw, int fh, uint16_t c);
+    void blendFill(int x, int y, int fw, int fh, uint16_t c, uint8_t alpha);
+    void hline(int x, int y, int len, uint16_t c) { fill(x, y, len, 1, c); }
+    void vline(int x, int y, int len, uint16_t c) { fill(x, y, 1, len, c); }
+    /** Vertical span between y0 and y1 inclusive, in either order. */
+    void span(int x, int y0, int y1, uint16_t c);
+    void dashedV(int x, int y0, int y1, uint16_t c, int on, int off);
+    void roundRect(int x, int y, int rw, int rh, int r, uint16_t c);
+    void roundFrame(int x, int y, int rw, int rh, int r, uint16_t c);
+    void pixel(int x, int y, uint16_t c) {
+        if (x >= 0 && y >= cy0 && x < w && y < cy1) px[y * w + x] = c;
+    }
+    void blendPixel(int x, int y, uint16_t c, uint8_t alpha);
+    void circle(int cx, int cy, int r, uint16_t c);
+
+    /** Draws UTF-8 text with its baseline at y; returns the advance width. */
+    int text(const Font &f, int x, int y, const char *s, uint16_t c, Align a = LEFT);
+    static int textWidth(const Font &f, const char *s);
+};

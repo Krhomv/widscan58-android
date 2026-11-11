@@ -1,0 +1,135 @@
+// GPL-3.0-or-later.
+#include "scanner.h"
+#include <math.h>
+#include <string.h>
+#include "proto.h"
+
+static inline float codeDb(uint8_t c) { return c * 0.5f - 127.5f; }
+
+// Linear power of each spectrum code: powf is slow on the S3 (no double FPU).
+static const float *linTable() {
+    static float t[256];
+    static bool done;
+    if (!done) {
+        for (int k = 0; k < 256; k++) t[k] = powf(10.0f, codeDb((uint8_t)k) / 10.0f);
+        done = true;
+    }
+    return t;
+}
+
+void Scanner::onFrame(uint8_t type, const uint8_t *p, uint16_t len, uint32_t nowMs) {
+    lastFrameMs = nowMs ? nowMs : 1;
+    if (type == FRAME_SPECTRUM && len >= 20) {
+        uint32_t lo = rd32(p + 4);
+        int32_t start = (int32_t)rd32(p + 8);
+        uint32_t bin = rd32(p + 12);
+        uint16_t n = rd16(p + 16);
+        if (n > Segment::MAX_BINS || len < 20 + n || !bin) return;
+        const uint8_t *codes = p + 20;
+        Segment *s = 0;
+        for (auto &x : seg)
+            if (x.used && x.loKhz == lo) s = &x;
+        bool fresh = !s || s->n != n || s->binHz != bin || s->startOffHz != start;
+        // Time since this segment's last update, for the max hold decay.
+        float dt = s && !fresh ? (int32_t)(nowMs - s->updatedMs) / 1000.0f : 0;
+        if (dt < 0) dt = 0;
+        float k = dt / HOLD_TAU_S;
+        if (k > 1) k = 1;
+        if (!s) {
+            // A free slot, else the stalest.
+            s = &seg[0];
+            for (auto &x : seg) {
+                if (!x.used) {
+                    s = &x;
+                    break;
+                }
+                if (x.updatedMs < s->updatedMs) s = &x;
+            }
+        }
+        s->used = true;
+        s->loKhz = lo;
+        s->startOffHz = start;
+        s->binHz = bin;
+        s->n = n;
+        s->updatedMs = nowMs;
+        memcpy(s->live, codes, n);
+        const float *lt = linTable();
+        for (int j = 0; j < n; j++) {
+            float lin = lt[codes[j]];
+            if (fresh) {
+                s->maxHold[j] = codes[j];
+                s->avg[j] = lin;
+            } else {
+                float h = s->maxHold[j];
+                h -= k * (h - codes[j]);
+                s->maxHold[j] = codes[j] > h ? codes[j] : h;
+                s->avg[j] += 0.05f * (lin - s->avg[j]);
+            }
+        }
+        spectra++;
+    } else if (type == FRAME_TELEMETRY && len >= 59) {
+        rotationHz = rd32(p + 12) / 1000.0f;
+        drops = rd32(p + 50);
+        running = p[58] != 0;
+    }
+}
+
+void Scanner::onLine(const char *line, uint32_t nowMs) {
+    (void)nowMs;
+    if (!strncmp(line, "INFO ", 5)) {
+        strncpy(info, line + 5, sizeof(info) - 1);
+        info[sizeof(info) - 1] = 0;
+    }
+}
+
+void Scanner::resetHolds() {
+    for (auto &s : seg)
+        if (s.used) {
+            for (int j = 0; j < s.n; j++) {
+                s.maxHold[j] = s.live[j];
+                s.avg[j] = linTable()[s.live[j]];
+            }
+        }
+}
+
+void Scanner::composite(float f0, float f1, int cols, float *live, float *maxHold, float *avgLin, uint32_t nowMs) const {
+    const float colMhz = (f1 - f0) / cols;
+    for (int x = 0; x < cols; x++) {
+        live[x] = maxHold[x] = avgLin[x] = NAN;
+        float fa = f0 + x * colMhz, fb = fa + colMhz, fc = fa + colMhz / 2;
+        float bestDist = INFINITY;
+        const Segment *best = 0;
+        int ka = 0, kb = 0;
+        for (const auto &s : seg) {
+            if (!s.used || (int32_t)(nowMs - s.updatedMs) > (int32_t)STALE_MS) continue;
+            float lo = s.loKhz / 1000.0f;
+            float start = lo + s.startOffHz / 1e6f, bin = s.binHz / 1e6f;
+            if (fc < start - bin / 2 || fc > start + (s.n - 0.5f) * bin) continue;
+            // Bins whose centre falls in the column; at least the nearest one.
+            int a = (int)ceilf((fa - start) / bin - 0.5f), b = (int)floorf((fb - start) / bin - 0.5f);
+            if (b < a) a = b = (int)lroundf((fc - start) / bin);
+            if (a < 0) a = 0;
+            if (b >= s.n) b = s.n - 1;
+            if (a > b) continue;
+            float d = fabsf(fc - lo);
+            if (d < bestDist) {
+                bestDist = d;
+                best = &s;
+                ka = a;
+                kb = b;
+            }
+        }
+        if (!best) continue;
+        uint8_t l = 0;
+        float m = 0;
+        float sum = 0;
+        for (int k = ka; k <= kb; k++) {
+            if (best->live[k] > l) l = best->live[k];
+            if (best->maxHold[k] > m) m = best->maxHold[k];
+            sum += best->avg[k];
+        }
+        live[x] = codeDb(l);
+        maxHold[x] = m * 0.5f - 127.5f;
+        avgLin[x] = sum / (kb - ka + 1);
+    }
+}
