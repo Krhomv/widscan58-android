@@ -152,9 +152,9 @@ void Ui::drawStatus(uint32_t nowMs) {
         int fw = (24 * batteryPct + 50) / 100;
         c.fill(bx + 2, 9, fw, 10, charging ? AMBER : batteryPct <= 15 ? CRITICAL : GOOD);
         if (usbPower) snprintf(s, sizeof(s), "USB");
-        else if (full) snprintf(s, sizeof(s), "Charged");
-        else if (charging) snprintf(s, sizeof(s), "Charging %d%%", batteryPct);
-        else snprintf(s, sizeof(s), "%d%%", batteryPct);
+        else if (full) snprintf(s, sizeof(s), "%.2f V  Charged", batteryV);
+        else if (charging) snprintf(s, sizeof(s), "%.2f V  Charging %d%%", batteryV, batteryPct);
+        else snprintf(s, sizeof(s), "%.2f V  %d%%", batteryV, batteryPct);
         c.text(font_small, bx - 6, 19, s, INK2, RIGHT);
         bx -= 6 + Canvas::textWidth(font_small, s);
     }

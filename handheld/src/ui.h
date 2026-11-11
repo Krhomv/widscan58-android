@@ -48,6 +48,7 @@ public:
     // Fed by the caller.
     LinkState link = LINK_WAITING;
     int batteryPct = -1;  // -1: unknown
+    float batteryV = 0;   // the cell, as read (high while charging)
     bool usbPower = false;
     bool charging = false, full = false;  // on USB, with a cell
 

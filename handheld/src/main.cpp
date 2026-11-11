@@ -281,6 +281,7 @@ void loop() {
         host = hostNow;
         ui->charging = charging;
         ui->full = full;
+        ui->batteryV = v;
         // While charging the cell reads high by the lift measured at plug-in
         // (about 0.2 V on the first unit), shrinking as the charge current
         // tapers off near 4.2 V.
@@ -374,15 +375,16 @@ void loop() {
 
     if (now - lastLog >= 5000) {
         // Only when a terminal has room for it: a full USB buffer must never stall the screen.
-        char line[256];
+        char line[320];
         unsigned f = frames ? frames : 1;
         int n = snprintf(line, sizeof(line),
                          "fps %.1f @%u MHz (update %u, plot %u = wait %u + draw %u + send %u, status+rows %u us), frames %u, crc errors %u, skipped %u, "
-                         "rotations %.1f/s, link drops %u\n",
+                         "rotations %.1f/s, link drops %u, battery %.3f V %s%s\n",
                          frames * 1000.0f / (now - lastLog), (unsigned)getCpuFrequencyMhz(), (unsigned)(usUpdate / f), (unsigned)(usDraw / f),
                          (unsigned)(usWait / f), (unsigned)(usBandDraw / f), (unsigned)(usSend / f),
                          (unsigned)(usFlush / f), (unsigned)parser.frames, (unsigned)parser.crcErrors,
-                         (unsigned)parser.skipped, scanner.rotationHz, (unsigned)scanner.drops);
+                         (unsigned)parser.skipped, scanner.rotationHz, (unsigned)scanner.drops, ui->batteryV,
+                         ui->usbPower ? "usb" : ui->full ? "charged" : ui->charging ? "charging" : "battery", Serial.isPlugged() ? " +host" : "");
         if (Serial && Serial.availableForWrite() >= n) Serial.write((const uint8_t *)line, n);
         lastLog = now;
         frames = 0;

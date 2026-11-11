@@ -147,6 +147,7 @@ int main(int argc, char **argv) {
     }
     ui.link = LINK_OK;
     ui.batteryPct = 82;
+    ui.batteryV = 3.95f;
     bool a, b, cc;
     ui.tap(436, 347 + 27 * 0 + 13, 3990, &a, &b, &cc);  // select R6 on the first row
     ui.update(sc, 4000);
