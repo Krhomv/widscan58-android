@@ -241,8 +241,8 @@ void loop() {
         // charge current through the cell's resistance) and down when it's
         // unplugged. A drop near 4.2 V is the charge ending. A charger that
         // was already in at boot can't be seen until it's unplugged.
-        static float vAvg, vBefore, rise = 0.2f;
-        static int settle, riseIn;
+        static float vAvg;
+        static int settle;
         static bool charging, full, host;
         if (gap) settle = 5;  // the first ~10 s: the cell recovers from the boot load
         bool hostNow = Serial.isPlugged();
@@ -265,29 +265,26 @@ void loop() {
             } else if (!charging && step > 0.04f) {
                 charging = true;
                 full = false;
-                vBefore = vAvg;  // measure the lift once it has settled
-                riseIn = 5;
             } else if (charging && step < -0.04f) {
                 charging = false;
                 full = vAvg > 4.12f;  // still on USB, done
             }
             vAvg += 0.25f * (v - vAvg);
-            if (riseIn > 0 && --riseIn == 0 && charging) {
-                float r = vAvg - vBefore;
-                rise = r < 0.05f ? 0.05f : r > 0.35f ? 0.35f : r;
-            }
             if (full && v < 4.0f) full = false;  // unplugged and used since
         }
         host = hostNow;
         ui->charging = charging;
         ui->full = full;
         ui->batteryV = v;
-        // While charging the cell reads high by the lift measured at plug-in
-        // (about 0.2 V on the first unit), shrinking as the charge current
-        // tapers off near 4.2 V.
-        float taper = (4.2f - v) / 0.3f;
-        taper = taper < 0 ? 0 : taper > 1 ? 1 : taper;
-        ui->batteryPct = full ? 100 : batteryPercent(charging ? v - rise * taper : v);
+        // While charging, the voltage here is the charger's output: the cell
+        // plus the charge current through the cell, connector and wires
+        // (about 0.2 V or more), and in the charger's constant-voltage phase
+        // it sits at 4.2 V long before the cell is full. So it says nothing
+        // reliable about the charge: the gauge keeps the last level read on
+        // battery and the text drops the percentage.
+        static int lastPct = -1;
+        if (!charging && !full) lastPct = batteryPercent(v);
+        ui->batteryPct = full ? 100 : !charging ? batteryPercent(v) : lastPct >= 0 ? lastPct : batteryPercent(v - 0.3f);
         if (!charging && v > 2.5f && v < 3.0f) {
             if (!lowSince) lowSince = now;
             else if (now - lowSince > 20000) {
