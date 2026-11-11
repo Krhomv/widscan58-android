@@ -29,7 +29,7 @@ RegionRows regionRows(Region r);
 class Ui {
 public:
     static const int W = 600, H = 450;
-    static const int LX = 6, PW = 588;  // plot left and width (the channel rows share the axis)
+    static const int LX = 2, PW = 596;  // plot left and width (the channel rows share the axis)
     Ui(Canvas &c, Settings &s) : c(c), set(s) { memset(wf, WF_EMPTY, sizeof(wf)); }
 
     /** Takes what it needs from the scanner (call with it locked). */
@@ -48,6 +48,14 @@ public:
     /** The whole screen as the charging screen (scanner idle), moved by
      *  dx, dy. Uses the battery fields below. */
     void drawCharging(uint32_t nowMs, int dx, int dy);
+
+    /** The menu to pick the channel rows (on a long press over them): the
+     *  whole screen while menuOpen. menuTap returns true when it needs a
+     *  redraw; settings change when Done is tapped with 3 picked. */
+    bool menuOpen = false;
+    void openMenu();
+    void drawMenu();
+    bool menuTap(int x, int y, bool *settingsChanged);
 
     // Fed by the caller.
     LinkState link = LINK_WAITING;
@@ -78,9 +86,11 @@ private:
     };
     Level lev[Settings::ROWS][10];
     int selRow = -1, selCh = -1;
+    uint32_t menuMask = 0;  // platforms picked in the menu
     uint32_t toastUntil = 0;
     const char *toast = "";
 
+    float f0 = 5640, f1 = 5950;  // the frequency axis, MHz
     float fx(float mhz) const;
     void drawStatus(uint32_t nowMs);
     void drawRows();

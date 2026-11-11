@@ -149,7 +149,7 @@ int main(int argc, char **argv) {
     ui.batteryPct = 82;
     ui.batteryV = 3.95f;
     bool a, b, cc;
-    ui.tap(391, 346 + 13 + 10, 3990, &a, &b, &cc);  // select R6 on the first row
+    ui.tap(408, 360 + 15, 3990, &a, &b, &cc);  // select R6 on the first row
     ui.update(sc, 4000);
     ui.draw(R_STATUS | R_PLOT | R_ROWS, 4000);
 
@@ -188,5 +188,22 @@ int main(int argc, char **argv) {
         ui.drawCharging(1200, 0, 0);
         save(argv[2]);
         printf("rendered charging screen\n");
+    }
+    // The rows menu: pick Analog F instead of DJI V1 20M.
+    {
+        bool changed;
+        ui.openMenu();
+        assert(ui.menuOpen);
+        ui.drawMenu();
+        if (argc > 3) save(argv[3]);
+        int k1 = 1, k5 = 5;  // Analog F, DJI V1 20M: cells (col k % 2, row k / 2)
+        auto tapCell = [&](int k) { ui.menuTap(12 + (k % 2) * 290 + 100, 64 + (k / 2) * 46 + 15, &changed); };
+        tapCell(k1);  // a 4th: refused
+        tapCell(k5);  // off
+        tapCell(k1);  // on
+        ui.menuTap(450, 410, &changed);  // Done
+        assert(changed && !ui.menuOpen);
+        assert(set.rows[0] == 0 && set.rows[1] == 1 && set.rows[2] == 8);
+        printf("menu ok\n");
     }
 }

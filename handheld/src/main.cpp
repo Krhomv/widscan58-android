@@ -199,7 +199,7 @@ static void chargeMode() {
                 displayBrightness(BRIGHTNESS[settings.brightness]);
             }
         }
-        if (!dim && now - lastTouch > 60000) {  // dim after a minute; a touch brings it back
+        if (!dim && now - lastTouch > 5000) {  // dim after 5 s; a touch brings it back for another 5
             dim = true;
             displayBrightness(BRIGHTNESS[BRIGHTNESS_LEVELS - 1]);
         }
@@ -281,7 +281,8 @@ void setup() {
 void loop() {
     static uint32_t lastDraw, lastStatus, lastRows, lastTouchPoll, lastBattery, lastActivity, lastLog;
     static uint32_t claimAt = 1500, claims, lowSince, keyDownAt;
-    static bool touching, dimmed, keyArmed, screenOff;
+    static bool touching, dimmed, keyArmed, screenOff, longFired, menuDirty;
+    static uint32_t touchStart;
     static int touchX, touchY, forced = R_STATUS | R_PLOT | R_ROWS;
     static unsigned frames;
     uint32_t now = millis();
@@ -316,7 +317,8 @@ void loop() {
         }
     }
 
-    // Touch: act on release, so a press can wake a dimmed screen without doing anything else.
+    // Touch: act on release, so a press can wake a dimmed screen without
+    // doing anything else. A long press on the channel rows opens their menu.
     if (now - lastTouchPoll >= 20) {
         lastTouchPoll = now;
         int x, y;
@@ -325,10 +327,27 @@ void loop() {
             touchX = x;
             touchY = y;
         }
+        if (down && !touching) {
+            touchStart = now;
+            longFired = false;
+        }
+        if (down && touching && !longFired && !ui->menuOpen && !screenOff && !dimmed && now - touchStart > 600 &&
+            touchY >= regionRows(R_ROWS).y0) {
+            longFired = true;
+            ui->openMenu();
+            menuDirty = true;
+        }
         if (touching && !down && !screenOff) {
-            if (dimmed) {
+            if (longFired) {
+                // the long press itself: nothing more on release
+            } else if (dimmed) {
                 dimmed = false;
                 displayBrightness(BRIGHTNESS[settings.brightness]);
+            } else if (ui->menuOpen) {
+                bool changed;
+                menuDirty |= ui->menuTap(touchX, touchY, &changed);
+                if (changed) saveSettings();
+                if (!ui->menuOpen) forced = R_STATUS | R_PLOT | R_ROWS;
             } else {
                 bool changed, reset, retry;
                 forced |= ui->tap(touchX, touchY, now, &changed, &reset, &retry);
@@ -406,6 +425,15 @@ void loop() {
         ui->link = claims > 5 ? LINK_LOST : LINK_WAITING;
     } else {
         ui->link = LINK_LOST;
+    }
+
+    if (ui->menuOpen) {  // the rows menu: the whole screen, redrawn on change
+        if (menuDirty) {
+            ui->drawMenu();
+            displayFlush(fb, 0, Ui::H);
+            menuDirty = false;
+        }
+        return;
     }
 
     int mask = R_PLOT | forced;

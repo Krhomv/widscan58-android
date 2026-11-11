@@ -6,21 +6,21 @@
 #include "platforms.h"
 
 // Band shown: E4 to E8, the analog chart's edges.
-static const float F0 = 5640, F1 = 5950;
+static const float BAND0 = 5640, BAND1 = 5950;  // the axis at most; it shrinks to what the scanner covers
 
 // Layout (see the mockup in README.md).
 static const int STATUS_H = 28;
-static const int SPEC_T = 34, SPEC_B = 222;  // spectrum plot rows
-static const int AXIS_Y = 236;              // MHz labels' baseline
-static const int WF_T = 242;                // waterfall top (Ui::WF_ROWS tall)
-static const int ROWS_T = 346, ROW_H = 34;  // channel rows: a caption, then the boxes
-static const int CAP_H = 13, BOX_H = 20;
+static const int SPEC_T = 34, SPEC_B = 236;  // spectrum plot rows
+static const int AXIS_Y = 250;              // MHz labels' baseline
+static const int WF_T = 256;                // waterfall top (Ui::WF_ROWS tall)
+static const int ROWS_T = 360, ROW_H = 30;  // channel rows
+static const int BOX_H = 25;
 
 RegionRows regionRows(Region r) {
     switch (r) {
         case R_STATUS: return {0, STATUS_H};
-        case R_PLOT: return {STATUS_H, 344};
-        default: return {344, Ui::H};
+        case R_PLOT: return {STATUS_H, 358};
+        default: return {358, Ui::H};
     }
 }
 
@@ -45,7 +45,7 @@ static uint16_t levelColor(float db) {
     return CRITICAL;
 }
 
-float Ui::fx(float mhz) const { return LX + (mhz - F0) / (F1 - F0) * PW; }
+float Ui::fx(float mhz) const { return LX + (mhz - f0) / (f1 - f0) * PW; }
 
 static float percentile10(const float *v, int n) {
     static float tmp[Ui::PW];
@@ -66,7 +66,24 @@ static float percentile10(const float *v, int n) {
 }
 
 void Ui::update(const Scanner &sc, uint32_t nowMs) {
-    sc.composite(F0, F1, PW, live, maxH, avgLin, nowMs);
+    // The axis spans what the scanner's segments cover (within the band), so
+    // no columns are left empty at the edges.
+    float lo = 1e9f, hi = 0;
+    for (const auto &g : sc.seg) {
+        if (!g.used || (int32_t)(nowMs - g.updatedMs) > (int32_t)Scanner::STALE_MS) continue;
+        float start = g.loKhz / 1000.0f + g.startOffHz / 1e6f, bin = g.binHz / 1e6f;
+        if (start - bin / 2 < lo) lo = start - bin / 2;
+        if (start + (g.n - 0.5f) * bin > hi) hi = start + (g.n - 0.5f) * bin;
+    }
+    if (hi > lo) {
+        float a = floorf(lo < BAND0 ? BAND0 : lo), b = ceilf(hi > BAND1 ? BAND1 : hi);
+        if (b - a > 100 && (fabsf(a - f0) >= 2 || fabsf(b - f1) >= 2)) {
+            f0 = a;
+            f1 = b;
+            memset(wf, WF_EMPTY, sizeof(wf));  // its columns were on the old axis
+        }
+    }
+    sc.composite(f0, f1, PW, live, maxH, avgLin, nowMs);
     rotationHz = sc.rotationHz;
     scanning = sc.running;
     if (sc.drops != lastDrops) {
@@ -95,12 +112,12 @@ void Ui::update(const Scanner &sc, uint32_t nowMs) {
     }
 
     // Channel levels: mean power over the channel from the average trace.
-    const float colMhz = (F1 - F0) / PW;
+    const float colMhz = (f1 - f0) / PW;
     for (int r = 0; r < Settings::ROWS; r++) {
         const Platform &p = PLATFORMS[set.rows[r]];
         for (int j = 0; j < p.count; j++) {
             float lo = p.ch[j].mhz - p.bw / 2.0f, hi = p.ch[j].mhz + p.bw / 2.0f;
-            int a = (int)ceilf((lo - F0) / colMhz - 0.5f), b = (int)floorf((hi - F0) / colMhz - 0.5f);
+            int a = (int)ceilf((lo - f0) / colMhz - 0.5f), b = (int)floorf((hi - f0) / colMhz - 0.5f);
             if (a < 0) a = 0;
             if (b > PW - 1) b = PW - 1;
             float sum = 0;
@@ -244,9 +261,10 @@ void Ui::drawPlot(uint32_t nowMs) {
     }
     for (int f = 5650; f <= 5950; f += 50) {
         int x = (int)lroundf(fx((float)f));
-        if (x < LX + PW) c.vline(x, SPEC_T, SPEC_B - SPEC_T + 1, GRID);
+        if (x < LX || x >= LX + PW) continue;
+        c.vline(x, SPEC_T, SPEC_B - SPEC_T + 1, GRID);
         snprintf(s, sizeof(s), "%d", f);
-        if (x < LX + PW - 10) c.text(font_small, x, AXIS_Y, s, INK2, CENTER);
+        if (x >= LX + 16 && x < LX + PW - 16) c.text(font_small, x, AXIS_Y, s, INK2, CENTER);
     }
 
     // Live trace: a fading fill under a line, then the max hold line.
@@ -275,7 +293,7 @@ void Ui::drawPlot(uint32_t nowMs) {
         const Platform &p = PLATFORMS[set.rows[selRow]];
         const Channel &ch = p.ch[selCh];
         int x = (int)lroundf(fx(ch.mhz));
-        int half = (int)lroundf(p.bw / 2.0f / (F1 - F0) * PW);
+        int half = (int)lroundf(p.bw / 2.0f / (f1 - f0) * PW);
         c.blendFill(x - half, SPEC_T, 2 * half, SPEC_B - SPEC_T + 1, INK, 28);
         c.dashedV(x, SPEC_T, SPEC_B, INK, 3, 3);
         float db = lev[selRow][selCh].db;
@@ -315,7 +333,7 @@ void Ui::drawPlot(uint32_t nowMs) {
 
 void Ui::boxGeometry(int row, int ch, int *x, int *w) const {
     const Platform &p = PLATFORMS[set.rows[row]];
-    float pxPerMhz = (float)PW / (F1 - F0);
+    float pxPerMhz = (float)PW / (f1 - f0);
     // As wide as the channel, but no wider than the gap to its neighbours.
     float width = p.bw * pxPerMhz;
     for (int j = 0; j < p.count; j++)
@@ -335,8 +353,7 @@ void Ui::drawRows() {
     for (int r = 0; r < Settings::ROWS; r++) {
         const Platform &p = PLATFORMS[set.rows[r]];
         int y = ROWS_T + r * ROW_H;
-        c.text(font_small, LX, y + CAP_H - 2, p.label, INK2);
-        int by = y + CAP_H;
+        int by = y + (ROW_H - BOX_H) / 2;
         for (int j = 0; j < p.count; j++) {
             int x, w;
             boxGeometry(r, j, &x, &w);
@@ -369,21 +386,6 @@ int Ui::tap(int x, int y, uint32_t nowMs, bool *settingsChanged, bool *resetHold
     }
     int r = (y - ROWS_T) / ROW_H;
     if (y < ROWS_T || r >= Settings::ROWS) return 0;
-    if (y - ROWS_T - r * ROW_H < CAP_H + 1) {
-        // The caption: the next platform not already on screen.
-        int p = set.rows[r];
-        for (int k = 0; k < PLATFORM_COUNT; k++) {
-            p = (p + 1) % PLATFORM_COUNT;
-            bool shown = false;
-            for (int j = 0; j < Settings::ROWS; j++)
-                if (j != r && set.rows[j] == p) shown = true;
-            if (!shown) break;
-        }
-        set.rows[r] = (uint8_t)p;
-        if (selRow == r) selRow = selCh = -1;
-        *settingsChanged = true;
-        return R_ROWS | R_STATUS | R_PLOT;
-    }
     // The nearest box in the row.
     const Platform &p = PLATFORMS[set.rows[r]];
     int best = -1, bestD = 1 << 30;
@@ -450,4 +452,81 @@ void Ui::drawCharging(uint32_t nowMs, int dx, int dy) {
         c.text(font_label, W / 2 + dx, y + bh + 110, s, INK2, CENTER);
     }
     c.text(font_small, W / 2 + dx, y + bh + 160, "Press power to scan", INK2, CENTER);
+}
+
+// ---- The rows menu (a long press on the channel rows) ----
+
+static const int MENU_TOP = 64, MENU_COLS = 2, MENU_GAP = 8, MENU_BTN_Y = 396, MENU_BTN_H = 44;
+
+void Ui::openMenu() {
+    menuMask = 0;
+    for (int r = 0; r < Settings::ROWS; r++) menuMask |= 1u << set.rows[r];
+    menuOpen = true;
+}
+
+static int popcount(uint32_t m) {
+    int n = 0;
+    for (; m; m &= m - 1) n++;
+    return n;
+}
+
+static void menuCell(int k, int *x, int *y, int *w, int *h) {
+    const int rows = (PLATFORM_COUNT + MENU_COLS - 1) / MENU_COLS;
+    *w = (Ui::W - 2 * 12 - (MENU_COLS - 1) * MENU_GAP) / MENU_COLS;
+    *h = (MENU_BTN_Y - 16 - MENU_TOP - (rows - 1) * MENU_GAP) / rows;
+    *x = 12 + (k % MENU_COLS) * (*w + MENU_GAP);
+    *y = MENU_TOP + (k / MENU_COLS) * (*h + MENU_GAP);
+}
+
+void Ui::drawMenu() {
+    c.fill(0, 0, W, H, BG);
+    int n = popcount(menuMask);
+    c.text(font_title, 12, 30, "Channel rows", INK);
+    char s[48];
+    if (n == Settings::ROWS) snprintf(s, sizeof(s), "%d selected", n);
+    else snprintf(s, sizeof(s), "Pick %d (%d selected)", Settings::ROWS, n);
+    c.text(font_small, 12, 50, s, INK2);
+    for (int k = 0; k < PLATFORM_COUNT; k++) {
+        int x, y, w, h;
+        menuCell(k, &x, &y, &w, &h);
+        bool on = menuMask & (1u << k);
+        c.roundRect(x, y, w, h, 6, on ? GOOD : rgb(32, 35, 40));
+        c.text(font_label, x + w / 2, y + h / 2 + 5, PLATFORMS[k].label, on ? rgb(255, 255, 255) : INK2, CENTER);
+    }
+    const int bw = (W - 2 * 12 - MENU_GAP) / 2;
+    c.roundRect(12, MENU_BTN_Y, bw, MENU_BTN_H, 6, rgb(32, 35, 40));
+    c.text(font_label, 12 + bw / 2, MENU_BTN_Y + MENU_BTN_H / 2 + 5, "Cancel", INK, CENTER);
+    bool ok = n == Settings::ROWS;
+    c.roundRect(12 + bw + MENU_GAP, MENU_BTN_Y, bw, MENU_BTN_H, 6, ok ? rgb(56, 152, 255) : rgb(32, 35, 40));
+    c.text(font_label, 12 + bw + MENU_GAP + bw / 2, MENU_BTN_Y + MENU_BTN_H / 2 + 5, "Done", ok ? rgb(255, 255, 255) : MUTED, CENTER);
+}
+
+bool Ui::menuTap(int x, int y, bool *settingsChanged) {
+    *settingsChanged = false;
+    if (y >= MENU_BTN_Y - 4) {
+        const int bw = (W - 2 * 12 - MENU_GAP) / 2;
+        if (x < 12 + bw + MENU_GAP / 2) {
+            menuOpen = false;  // Cancel
+        } else if (popcount(menuMask) == Settings::ROWS) {
+            // Rows in the platforms' order.
+            int r = 0;
+            for (int k = 0; k < PLATFORM_COUNT && r < Settings::ROWS; k++)
+                if (menuMask & (1u << k)) set.rows[r++] = (uint8_t)k;
+            selRow = selCh = -1;
+            menuOpen = false;
+            *settingsChanged = true;
+        }
+        return true;
+    }
+    for (int k = 0; k < PLATFORM_COUNT; k++) {
+        int cx, cy, w, h;
+        menuCell(k, &cx, &cy, &w, &h);
+        if (x >= cx - MENU_GAP / 2 && x < cx + w + MENU_GAP / 2 && y >= cy - MENU_GAP / 2 && y < cy + h + MENU_GAP / 2) {
+            uint32_t bit = 1u << k;
+            if (menuMask & bit) menuMask &= ~bit;
+            else if (popcount(menuMask) < Settings::ROWS) menuMask |= bit;
+            return true;
+        }
+    }
+    return false;
 }
