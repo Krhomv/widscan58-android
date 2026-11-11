@@ -32,7 +32,7 @@ the C5's serial port, the same protocol the web UI uses over USB.
 | Tap the status bar | Change the brightness (4 steps, kept) |
 | Power key, hold to turn on | Keep holding until the screen lights |
 | Power key, short press | Screen off / on (the scan keeps running) |
-| Power key, hold 2 s | Power off |
+| Power key, hold 2 s | Power off (also stops the scan, so on USB the C5 idles while the cell charges) |
 
 The screen dims after 3 minutes without a touch (the first tap only wakes it),
 and the board powers off when the cell stays below 3.0 V for 20 seconds.

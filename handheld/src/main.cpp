@@ -104,6 +104,10 @@ static void powerOff(const char *why) {
     message(why);
     delay(800);
     displayBrightness(0);
+    // On USB the board stays powered after boardPowerOff, so idle the C5
+    // too (its LED goes back to blinking) and restart it when turned on.
+    Link.print("SCAN STOP\n");
+    Link.flush();
     boardPowerOff();
     delay(300);
     displaySleep(true);
@@ -113,6 +117,7 @@ static void powerOff(const char *why) {
     displayBrightness(BRIGHTNESS[settings.brightness]);
     while (powerKeyDown()) delay(20);
     boardPowerHold();
+    claimScanner();
 }
 
 void setup() {
