@@ -22,7 +22,10 @@ the C5's serial port, the same protocol the web UI uses over USB.
   touch brings it back) and drifts a few pixels a minute against OLED wear.
 - **Spectrum:** the band the scanner covers (within 5640–5950 MHz), across the
   full width (no scale labels: the channel rows below share its frequency axis), stitched from the scanner's LO
-  segments (each point from the nearest LO, as the web UI's panorama). Blue is
+  segments. The handheld asks for one LO per channel (`MODE SINGLE`: 8 LOs 37 MHz apart on Raceband) and a
+  spectrum every 2 hops, flattens each segment with a response EQ (seeded with the C5's measured shape, then
+  learned from the noise floor, median across segments) and crossfades the overlaps, so the floor is flat
+  across the band instead of showing a hump per LO. Blue is
   live, amber the max hold, which fades back to the live trace over about a minute. Dark columns are parts of the band no LO reaches.
 - **Waterfall:** the last ~2 seconds, to tell a steady VTX from on-and-off Wi-Fi.
 - **Channel rows:** three platforms (by default Analog R, DJI V1 20 MHz and DJI O3 20 MHz; Oscar Liang's chart, as the Android app's

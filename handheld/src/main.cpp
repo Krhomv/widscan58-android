@@ -48,7 +48,15 @@ static void linkTask(void *) {
 /** Puts the scanner in monitor mode (it boots in lap timer mode, silent) and
  *  makes this UART the port it answers on. One write: a lone byte after a
  *  pause could look like a RotorHazard probe. */
-static void claimScanner() { Link.print("PROTOCOL MONITOR\nSCAN START\nINFO\n"); }
+// Monitor mode settings aren't saved on the C5, so they're sent with every
+// claim. One LO per channel (MODE SINGLE): Raceband gives 8 LOs 37 MHz apart,
+// so segments overlap where the response is still within ~2 dB (the default
+// GROUP pairs channels into 4 LOs 74 MHz apart, and the seams at +-37 MHz are
+// ~11 dB down: 4 humps). A spectrum every 2 hops instead of 4 keeps each
+// segment's refresh rate about where it was with 4 LOs.
+static void claimScanner() {
+    Link.print("PROTOCOL MONITOR\nCHANNELS DEFAULT\nMODE SINGLE\nSPEC 2 256 40000000 MAX\nSCAN START\nINFO\n");
+}
 static void idleScanner() {
     Link.printf("PROTOCOL MONITOR\nSCAN STOP\nGPIO %d HIGH\n", C5_LED_GPIO);  // the LED is active low
     Link.flush();

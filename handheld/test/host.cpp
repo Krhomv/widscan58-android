@@ -31,8 +31,10 @@ static void put16(std::vector<uint8_t> &v, uint16_t x) {
 static double rnd() { return rand() / (double)RAND_MAX; }
 
 // Per-bin dBFS at f (MHz) for the simulated band.
+static bool quietBand = false;
 static double band(double f, bool wifiOn) {
     double p = -96 + rnd() * 5;
+    if (quietBand) return p;
     struct S { double f, a, bw; bool on; } sig[] = {{5658, -50, 9, true}, {5843, -56, 9, true}, {5757, -74, 9, wifiOn}, {5917, -82, 1.2, true}};
     for (auto &s : sig) {
         if (!s.on) continue;
@@ -58,7 +60,9 @@ static std::vector<uint8_t> spectrum(uint32_t loKhz, bool wifiOn) {
     for (int k = 0; k < n; k++) {
         double f = loKhz / 1000.0 + (-40e6 + bin / 2.0 + k * (double)bin) / 1e6;
         double off = fabs(f - loKhz / 1000.0);
-        double db = band(f, wifiOn) - (off > 28 ? (off - 28) * 1.5 : 0);  // filter skirt
+        // The C5's response (a bit off the EQ seed, which has to learn the rest).
+        double skirt = off < 21 ? 0 : off < 30 ? -0.35 * (off - 21) : -3.15 - 1.1 * (off - 30);
+        double db = band(f, wifiOn) + skirt;
         int code = (int)lround((db + 127.5) * 2);
         v.push_back((uint8_t)(code < 0 ? 0 : code > 255 ? 255 : code));
     }
@@ -121,6 +125,43 @@ int main(int argc, char **argv) {
         printf("hold decay ok: %.1f dB -> %.1f dB after 60 s\n", start / 2, left / 2);
     }
 
+    // A flat noise floor through 8 overlapping LOs (MODE SINGLE, Raceband)
+    // stitches flat once the EQ has learned the response: no humps.
+    {
+        quietBand = true;
+        Scanner sc;
+        const uint32_t los[] = {5650000, 5687000, 5724000, 5761000, 5798000, 5835000, 5872000, 5909000};
+        const int cols = 400;
+        static float l[cols], m[cols], a[cols];
+        auto ripple = [&](uint32_t now) {
+            sc.composite(5645, 5945, cols, l, m, a, now);
+            // Over 10-column (7.5 MHz) means: the shape, not the bin noise.
+            float lo = 1e9f, hi = -1e9f;
+            for (int x = 0; x + 10 <= cols; x += 10) {
+                float sum = 0;
+                for (int k = 0; k < 10; k++) sum += a[x + k];
+                float d = 10 * log10f(sum / 10);
+                lo = fminf(lo, d);
+                hi = fmaxf(hi, d);
+            }
+            return hi - lo;
+        };
+        uint32_t t = 1;
+        for (int i = 0; i < 8 * 40; i++, t += 8) {
+            auto sp = spectrum(los[i % 8], false);
+            sc.onFrame(FRAME_SPECTRUM, sp.data(), sp.size(), t);
+        }
+        float early = ripple(t);
+        for (int i = 0; i < 8 * 600; i++, t += 8) {
+            auto sp = spectrum(los[i % 8], false);
+            sc.onFrame(FRAME_SPECTRUM, sp.data(), sp.size(), t);
+        }
+        float late = ripple(t);
+        printf("flat stitch ok: ripple %.2f dB after 2.5 s, %.2f dB after 40 s (%u EQ passes)\n", early, late, sc.eqUpdates);
+        assert(late < 1.0f);
+        quietBand = false;
+    }
+
     static uint16_t fb[Ui::W * Ui::H];
     Canvas canvas(fb, Ui::W, Ui::H);
     Settings set;
@@ -131,13 +172,13 @@ int main(int argc, char **argv) {
     Sink sink{&sc, 1, 0};
     StreamParser p([](void *c, uint8_t t, const uint8_t *pl, uint16_t n) { auto *s = (Sink *)c; s->sc->onFrame(t, pl, n, s->now); },
                    [](void *c, const char *l) { ((Sink *)c)->sc->onLine(l, ((Sink *)c)->now); }, &sink);
-    // Raceband in group mode: 4 LOs.
-    const uint32_t los[] = {5676000, 5750000, 5824000, 5898000};
+    // Raceband in single mode: 8 LOs.
+    const uint32_t los[] = {5650000, 5687000, 5724000, 5761000, 5798000, 5835000, 5872000, 5909000};
     int hop = 0;
     for (uint32_t t = 1; t < 4000; t += 4) {  // a spectrum every 4 ms, ~4 s
         sink.now = t;
         bool wifi = (t / 120) % 3 == 0;
-        auto f = frame(FRAME_SPECTRUM, spectrum(los[hop++ % 4], wifi));
+        auto f = frame(FRAME_SPECTRUM, spectrum(los[hop++ % 8], wifi));
         p.push(f.data(), f.size());
         if (t % 250 == 1) {
             auto tf = frame(FRAME_TELEMETRY, telemetry());
